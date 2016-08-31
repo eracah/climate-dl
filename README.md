@@ -4,9 +4,10 @@ Rough notes:
 Semi-Supervised
 diff)
 * Baseline (patches)
-    * Hidden code is vector
-      * Unlabelled examples -> we try to reconstruct patch from code
-      * Labelled examples -> we pass code thru classification network and penalize via cross entropy
+    * TL;DR 
+       * Hidden code is vector
+       * Unlabelled examples -> we try to reconstruct patch from code
+       * Labelled examples -> we pass code thru classification network and penalize via cross entropy
   * Training Data
      * features: num_time_chunks x 16 x 128 x 128 patches 
      * labels (for labeled data): what type of event is in the patch (we assume one or none per patch?)
@@ -27,12 +28,13 @@ diff)
          * for labelled images, extract feature vector, put thru classifier and backprop using crossentropy loss
           * for unlabelled images (and maybe labelled as well), put thru whole autoencoder and backprop using mean squared error
    * Potential Bells and Whistles to Increase Complexity
+     * U Net stuff Chris talked about
      * use unsupervised criterion on labelled data as well
      * exploit some temporal coherence prior
        * assume features of interest change slowly in time?
      * add in spatial transformer units
      * put reconstructions thru discriminator of a GAN to get loss instead of mean squared error
-     * 
+     * added in lateral connections (like in ladder networks, stacked what where autoencoders)
   
         
 
