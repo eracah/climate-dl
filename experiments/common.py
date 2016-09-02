@@ -76,7 +76,7 @@ def get_slices(img, img_size=128, step_size=20):
                 slices.append(chunk)
     return np.asarray(slices, dtype=img.dtype)
 
-def data_iterator(batch_size, data_dir, time_chunks_per_example=1):
+def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1):
     '''
     Args:
        batch_size: number of examples in a batch
@@ -107,3 +107,8 @@ def data_iterator(batch_size, data_dir, time_chunks_per_example=1):
             for b in range(0, num_examples, batch_size):
                 res = time_slice[b:b+batch_size]
                 yield res
+                
+if __name__ == "__main__":
+    for x in data_iterator(batch_size=100, time_chunks_per_example=2):
+        assert x.shape == (100, 2, 16, 128, 128)
+        break
