@@ -52,10 +52,21 @@ diff)
 
 08/02/2016
 --
-
-* Experiment 1: totally unsupervised autoencoder on 128/256 patches
+#Patches
+* Experiment 1: totally unsupervised autoencoder on 128/256 patches n x 1 time step x 16 x 128 x 128
 * Experiment 2: same as above experiment, but semi-supervised, so we'd assign a label to each patch (the label corresponds to the event at the centre of the patch)
-* Experiment 3: same as the above experiment, but using weighted squared loss (using segmentation map)
+      * 2a. add in time with two options:
+              * 3D convolution
+              * 2D convolution but add slow feature analysis or time as context information 
+                   * https://arxiv.org/pdf/1602.06822.pdf
+      * 2b. Add in ladder (lateral) connections like ladder networks and stacked what where ae's
+      * 2c. Curate patches for training set (balanced set of no class vs. class)
+      * 2d. (Moonshot) Train a GAN based on images, use discriminator as loss fxn
+
+
+#Segmentation
+* Experiment 3: Same as above by segmentation of each patch instead of classification (UNet-like)
+      * 3a  Weight the boundary pixels higher like UNet
 * Experiment 4: segmentation network (e.g. UNet) on 128/256 patches? In this experiment, we actually do a segmentation network rather than the autoencoder, but we could still extract the intermediate representation for clustering?
 
 
