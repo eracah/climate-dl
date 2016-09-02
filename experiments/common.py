@@ -66,9 +66,10 @@ def get_chunk_class(boxes, chunk_coords):
 
     return cls
     
-    
 
-def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/"):
+import pdb
+
+def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False):
     """
     This iterator will return tensors of dimension (8, 16, 768, 1152) 
     each tensor corresponding to one of the 365 days of the year
@@ -94,6 +95,8 @@ def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/
     lsdir=listdir(maindir)
     rpfile = re.compile(r"^cam5_.*\.nc$")
     camfiles = [f for f in lsdir if rpfile.match(f)]
+    if shuffle:
+        np.random.shuffle(camfiles)
     for camfile in camfiles:
         dataset = nc.Dataset(maindir+'/'+camfile, "r", format="NETCDF4")
         time_steps=8
@@ -122,7 +125,7 @@ def get_slices(img, labels, img_size=128, step_size=20):
     
     return np.asarray(slices, dtype=img.dtype), np.asarray(classes)
 
-def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1):
+def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False):
     '''
     Args:
        batch_size: number of examples in a batch
@@ -131,7 +134,7 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
                             - should divide evenly into 8
     '''
     # for each day (out of 365 days)
-    for tensor, labels in _day_iterator(data_dir=data_dir):  #tensor is 8,16,768,1152
+    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle):  #tensor is 8,16,768,1152
         time_chunks_per_day, variables, h, w = tensor.shape #time_chunks will be 8
         assert time_chunks_per_day % time_chunks_per_example == 0, "For convenience, \
         the time chunk size should divide evenly for the number of time chunks in a single day"
@@ -139,22 +142,28 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
         #reshapes the tensor into multiple spatiotemporal chunks of (chunk_size, 16, 768,1152)
         spatiotemporal_tensor = tensor.reshape(time_chunks_per_day / time_chunks_per_example, 
                                                time_chunks_per_example, variables, h ,w)
+        if shuffle:
+            np.random.shuffle(spatiotemporal_tensor)
         
         #for each spt_chunk -> patches up chunk into (num_chunks, chunk_size, 16,128,128)
         #time slices is list of multiple (num_chunks, chunk_size, 16,128,128) tensors
-        time_slices_with_classes = [ get_slices(spt_chunk, labels=labels[ind]) for ind, spt_chunk in enumerate(spatiotemporal_tensor)]
+        #old: memory intensive
+        #time_slices_with_classes = [ get_slices(spt_chunk, labels=labels[ind]) for ind, spt_chunk in enumerate(spatiotemporal_tensor)]
+        #for (time_slice, classes) in time_slices_with_classes: ...
         
-        # for each time step that day (there are 8 time steps
-        # with 3 hr gaps, so 8*3 = 24 hrs)
-        for (time_slice, classes) in time_slices_with_classes:
-            # we'll get e.g. ~2000 slices (at 128px), and now we run these
-            # through the batch size iterator to get these in 128-size batches
-            # for the gpu
-            num_examples = time_slice.shape[0]
-            for b in range(0, num_examples, batch_size):
-                res = time_slice[b:b+batch_size]
-                cls = classes[b:b+batch_size]
-                yield res, cls
+        for ind, spt_chunk in enumerate(spatiotemporal_tensor):
+            time_slices_with_class = get_slices(spt_chunk, labels=labels[ind])        
+            # for each time step that day (there are 8 time steps
+            # with 3 hr gaps, so 8*3 = 24 hrs)
+            for (time_slice, classes) in [time_slices_with_class]:
+                # we'll get e.g. ~2000 slices (at 128px), and now we run these
+                # through the batch size iterator to get these in 128-size batches
+                # for the gpu
+                num_examples = time_slice.shape[0]
+                for b in range(0, num_examples, batch_size):
+                    res = time_slice[b:b+batch_size]
+                    cls = classes[b:b+batch_size]
+                    yield res, cls
 
 # little test/example
 if __name__ == "__main__":
