@@ -48,3 +48,14 @@ diff)
       * Unlabelled examples -> we try to reconstruct full image from code
       * Labelled examples -> we compare to real semantic segmentation mask and penalize based on how far the code is from that
 
+----------------
+
+08/02/2016
+--
+
+* Experiment 1: totally unsupervised autoencoder on 128/256 patches
+* Experiment 2: same as above experiment, but semi-supervised, so we'd assign a label to each patch (the label corresponds to the event at the centre of the patch)
+* Experiment 3: same as the above experiment, but using weighted squared loss (using segmentation map)
+* Experiment 4: segmentation network (e.g. UNet) on 128/256 patches? In this experiment, we actually do a segmentation network rather than the autoencoder, but we could still extract the intermediate representation for clustering?
+
+
