@@ -52,8 +52,8 @@ def calc_int_over_box_area(coords_1, box_coords):
 def get_chunk_class(boxes, chunk_coords):
     
     # for some reason there are classes that are less than 0, so we set
-    # the none class to -999
-    cls=-999
+    # the none class to -3
+    cls=-3
     for box in boxes:
         box_coords = box[:4]
         box_class = box[-1]
@@ -69,7 +69,7 @@ def get_chunk_class(boxes, chunk_coords):
 
 import pdb
 
-def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False):
+def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False, days=365):
     """
     This iterator will return tensors of dimension (8, 16, 768, 1152) 
     each tensor corresponding to one of the 365 days of the year
@@ -97,7 +97,7 @@ def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/
     camfiles = [f for f in lsdir if rpfile.match(f)]
     if shuffle:
         np.random.shuffle(camfiles)
-    for camfile in camfiles:
+    for camfile in camfiles[:days]:
         dataset = nc.Dataset(maindir+'/'+camfile, "r", format="NETCDF4")
         time_steps=8
         x=768
@@ -125,7 +125,7 @@ def get_slices(img, labels, img_size=128, step_size=20):
     
     return np.asarray(slices, dtype=img.dtype), np.asarray(classes)
 
-def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False):
+def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False, step_size=20, days=365):
     '''
     Args:
        batch_size: number of examples in a batch
@@ -134,7 +134,13 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
                             - should divide evenly into 8
     '''
     # for each day (out of 365 days)
-    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle):  #tensor is 8,16,768,1152
+    day=0
+    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, days=days):  #tensor is 8,16,768,1152
+        print "day", day
+        # preprocess for day
+        tensor, min_, max_ = normalize(tensor)
+        #TODO: preprocess over everything
+        #TODO: split up into train,test, val
         time_chunks_per_day, variables, h, w = tensor.shape #time_chunks will be 8
         assert time_chunks_per_day % time_chunks_per_example == 0, "For convenience, \
         the time chunk size should divide evenly for the number of time chunks in a single day"
@@ -151,11 +157,13 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
         #time_slices_with_classes = [ get_slices(spt_chunk, labels=labels[ind]) for ind, spt_chunk in enumerate(spatiotemporal_tensor)]
         #for (time_slice, classes) in time_slices_with_classes: ...
         
+        #print spatiotemporal_tensor.shape
         for ind, spt_chunk in enumerate(spatiotemporal_tensor):
-            time_slices_with_class = get_slices(spt_chunk, labels=labels[ind])        
+            time_slices_with_class = get_slices(spt_chunk, labels=labels[ind], step_size=step_size)        
             # for each time step that day (there are 8 time steps
             # with 3 hr gaps, so 8*3 = 24 hrs)
             for (time_slice, classes) in [time_slices_with_class]:
+
                 # we'll get e.g. ~2000 slices (at 128px), and now we run these
                 # through the batch size iterator to get these in 128-size batches
                 # for the gpu
@@ -165,12 +173,66 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
                     cls = classes[b:b+batch_size]
                     yield res, cls
 
+def normalize(arr,min_=None, max_=None, axis=(0,2,3)):
+        if min_ is None or max_ is None:
+            min_ = arr.min(axis=(0,2,3), keepdims=True)
+
+            max_ = arr.max(axis=(0,2,3), keepdims=True)
+
+        midrange = (max_ + min_) / 2.
+
+        range_ = max_ - min_
+
+        arr = (arr - midrange) / (range_ /2.)
+        return arr, min_, max_
+    
+import os
+
+import sys
+
+from shutil import copyfile
+import imp
+
+#print os.getcwd()
+
+def create_run_dir(custom_rc=False):
+    results_dir = os.getcwd() + '/results'
+    run_num_file = os.path.join(results_dir, "run_num.txt")
+    if not os.path.exists(results_dir):
+        print "making results dir"
+        os.mkdir(results_dir)
+
+    if not os.path.exists(run_num_file):
+        print "making run num file...."
+        f = open(run_num_file,'w')
+        f.write('0')
+        f.close()
+
+
+
+
+    f = open(run_num_file,'r+')
+
+    run_num = int(f.readline()) + 1
+
+    f.seek(0)
+
+    f.write(str(run_num))
+
+
+    run_dir = os.path.join(results_dir,'run%i'%(run_num))
+    os.mkdir(run_dir)
+    
+    if custom_rc:
+        make_custom_config_file(run_dir)
+    return run_dir
+                    
 # little test/example
 if __name__ == "__main__":
     for x,y in data_iterator(batch_size=1716, time_chunks_per_example=1):
         
         # if any of the labels are not none
-        if y[y>-999].shape[0] > 0:
-            labelled_chunks = x[y>-999]
+        if y[y>-3].shape[0] > 0:
+            labelled_chunks = x[y>-3]
         print x.shape, y.shape
 
