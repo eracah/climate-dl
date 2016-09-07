@@ -69,7 +69,7 @@ def get_chunk_class(boxes, chunk_coords):
 
 import pdb
 
-def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False, days=365):
+def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False, days=365, month1='01', day1='01'):
     """
     This iterator will return tensors of dimension (8, 16, 768, 1152) 
     each tensor corresponding to one of the 365 days of the year
@@ -95,9 +95,15 @@ def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/
     lsdir=listdir(maindir)
     rpfile = re.compile(r"^cam5_.*\.nc$")
     camfiles = [f for f in lsdir if rpfile.match(f)]
+    camfiles.sort()
+
+    prefix = 'cam5_1_amip_run2.cam2.h2.1979'
+    suffix = '00000.nc'
+    ind= camfiles.index('-'.join([prefix, month1, day1, suffix]))
+    camfiles = camfiles[ind:ind+days]
     if shuffle:
         np.random.shuffle(camfiles)
-    for camfile in camfiles[:days]:
+    for camfile in camfiles:
         dataset = nc.Dataset(maindir+'/'+camfile, "r", format="NETCDF4")
         time_steps=8
         x=768
@@ -125,7 +131,7 @@ def get_slices(img, labels, img_size=128, step_size=20):
     
     return np.asarray(slices, dtype=img.dtype), np.asarray(classes)
 
-def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False, step_size=20, days=365):
+def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False, step_size=20, days=365,month1='01', day1='01'):
     '''
     Args:
        batch_size: number of examples in a batch
@@ -135,7 +141,7 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
     '''
     # for each day (out of 365 days)
     day=0
-    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, days=days):  #tensor is 8,16,768,1152
+    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, days=days, month1=month1, day1=day1):  #tensor is 8,16,768,1152
         print "day", day
         # preprocess for day
         tensor, min_, max_ = normalize(tensor)
