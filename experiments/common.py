@@ -8,6 +8,8 @@ import os
 import sys
 from shutil import copyfile
 import imp
+from lasagne.layers import *
+from sklearn.manifold import TSNE
 
 import itertools
 def make_time_slice(dataset, time, variables, x=768, y=1152):
@@ -206,7 +208,7 @@ def plot_learn_curve(tr_losses, val_losses, save_dir='.'):
     plt.savefig(save_dir + '/learn_curve.png')
     plt.clf()
     
-def plot_clusters(i,x,y, save_dir='.'):
+def plot_clusters(i,x,y,net_cfg, save_dir='.'):
     x = np.squeeze(x)
     hid_L = net_cfg['h_fn'](x)
     ts = TSNE().fit_transform(hid_L)
