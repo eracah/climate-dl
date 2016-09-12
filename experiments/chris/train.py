@@ -29,6 +29,7 @@ def get_net(net_cfg, args):
     X = T.tensor4('X')
     net_out = get_output(l_out, X)
     loss = squared_error(net_out, X).mean()
+    net_out_det = get_output(l_out, X, deterministic=True)
     params = get_all_params(l_out, trainable=True)
     lr = theano.shared(floatX(args["learning_rate"]))
     if "rmsprop" in args:
@@ -39,7 +40,7 @@ def get_net(net_cfg, args):
     #updates = rmsprop(loss, params, learning_rate=lr)
     train_fn = theano.function([X], loss, updates=updates)
     loss_fn = theano.function([X], loss)
-    out_fn = theano.function([X], net_out)
+    out_fn = theano.function([X], net_out_det)
     return {
         "train_fn": train_fn,
         "loss_fn": loss_fn,
@@ -48,8 +49,30 @@ def get_net(net_cfg, args):
         "l_out": l_out
     }
 
+def make_inverse(l_in, layer):
+    if isinstance(layer, Conv2DLayer):
+        return Deconv2DLayer(l_in, layer.input_shape[1], layer.filter_size, stride=layer.stride, crop=layer.pad,
+                             nonlinearity=layer.nonlinearity)
+    else:
+        return InverseLayer(l_in, layer)
 
-def autoencoder_basic(args={"f":32, "d":4096}):
+def massive_1_deep(args):
+    conv = InputLayer((None,16,128,128))
+    conv = GaussianNoiseLayer(conv, args["sigma"])
+    for i in range(0,1):
+        conv = Conv2DLayer(conv, num_filters=1024, filter_size=9, stride=1, nonlinearity=args["nonlinearity"])
+        conv = MaxPool2DLayer(conv, pool_size=5, stride=4)
+    #conv = DenseLayer(conv, num_units=1024, nonlinearity=args["nonlinearity"])
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+    for layer in get_all_layers(conv):
+        print layer, layer.output_shape
+    print count_params(layer)
+    return conv    
+
+def autoencoder_basic(args={"f":32, "d":4096, "tied":True}):
     conv = InputLayer((None,16,128,128))
     conv = GaussianNoiseLayer(conv, args["sigma"])
     for i in range(0, 4):
@@ -62,12 +85,14 @@ def autoencoder_basic(args={"f":32, "d":4096}):
     for layer in get_all_layers(conv)[::-1]:
         if isinstance(layer, InputLayer):
             break
-        conv = InverseLayer(conv, layer)
+        if args["tied"]:
+            conv = InverseLayer(conv, layer)
+        else:
+            conv = make_inverse(conv, layer)
     for layer in get_all_layers(conv):
         print layer, layer.output_shape
     print count_params(layer)
     return conv
-
 
 def autoencoder_basic_double_up(args={"f":32, "d":4096}):
     conv = InputLayer((None,16,128,128))
@@ -141,7 +166,7 @@ def iterate(X_train, bs=32):
         yield X_train[b*bs:(b+1)*bs]
         b += 1
 
-def train(cfg, num_epochs, out_folder, sched={}, batch_size=128, model_folder="models", tmp_folder="tmp", days=1, data_dir="/storeSSD/cbeckham/nersc/big_images/", debug=True):
+def train(cfg, num_epochs, out_folder, sched={}, batch_size=128, model_folder="/storeSSD/cbeckham/nersc/models/", tmp_folder="tmp", days=1, data_dir="/storeSSD/cbeckham/nersc/big_images/", debug=True):
     # extract methods
     train_fn, loss_fn, out_fn = cfg["train_fn"], cfg["loss_fn"], cfg["out_fn"]
     lr = cfg["lr"]
@@ -190,8 +215,10 @@ def train(cfg, num_epochs, out_folder, sched={}, batch_size=128, model_folder="m
             f.write("%i,%f,%f,%f\n" % (epoch+1, np.mean(train_losses), np.mean(valid_losses), time_taken))
             f.flush()
             # save model at each epoch
-            #with open("%s/%i.model" % (out_folder, epoch), "wb") as g:
-            #    pickle.dump( get_all_param_values(cfg["l_out"]), g, pickle.HIGHEST_PROTOCOL)
+            if not os.path.exists("%s/%s" % (model_folder, out_folder)):
+                os.makedirs("%s/%s" % (model_folder, out_folder))
+            with open("%s/%s/%i.model" % (model_folder, out_folder, epoch), "wb") as g:
+                pickle.dump( get_all_param_values(cfg["l_out"]), g, pickle.HIGHEST_PROTOCOL)
 
 
 if __name__ == "__main__":
@@ -232,14 +259,71 @@ if __name__ == "__main__":
         net_cfg = get_net(autoencoder_basic_double_up_512, args)
         train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_beefier_double_up_512_sigma1", sched={100:0.001,200:0.0001})
 
-    # ------------------
-
+    # ----------
+    # using relu
+    # ----------
 
     if "BASIC_TEST_1_DAY_RELU_F64" in os.environ:
         args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":rectify, "f":64, "d":4096 }
         net_cfg = get_net(autoencoder_basic, args)
         train(net_cfg, num_epochs=300, batch_size=64, out_folder="output/basic_test_1_day_relu", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F64_SIGMA1" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":1., "nonlinearity":rectify, "f":64, "d":4096 }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=64, out_folder="output/basic_test_1_day_relu_sigma1", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F64_UT" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":1., "nonlinearity":rectify, "f":64, "d":4096, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=64, out_folder="output/basic_test_1_day_relu_ut", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F128_ND_SIGMA1" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":1., "nonlinearity":rectify, "f":128 }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_f128_nd_relu_sigma1", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F128_ND_UT" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":rectify, "f":128, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_f128_nd_relu_ut", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F128_ND_UT_SOFTPLUS" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":softplus, "f":128, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_f128_nd_relu_ut_softplus", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F128_ND_UT_ELU" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "f":128, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_f128_nd_relu_ut_elu", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F128_ND_SIGMA1_UT" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":1., "nonlinearity":rectify, "f":128, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_f128_nd_relu_sigma1_ut", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F128_ND_UT_ELU_SIGMA0P1" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0.1, "nonlinearity":elu, "f":128, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_f128_nd_relu_ut_elu_sigma0.1", sched={100:0.001,200:0.0001})
+    if "BASIC_TEST_1_DAY_RELU_F128_UT_ELU_SIGMA0P1" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0.1, "nonlinearity":elu, "f":128, "d":4096, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        train(net_cfg, num_epochs=300, batch_size=32, out_folder="output/basic_test_1_day_f128_relu_ut_elu_sigma0.1", sched={100:0.001,200:0.0001})
 
+    if "DDD" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":1., "nonlinearity":rectify }
+        net_cfg = get_net(massive_1_deep, args)
+        train(net_cfg, num_epochs=300, batch_size=64, out_folder="output/massive_1_deep", sched={100:0.001,200:0.0001})
+        
+    if "DEBUG" in os.environ:
+        print "untied"
+        args = { "learning_rate": 0.01, "sigma":1., "nonlinearity":rectify, "f":128, "tied":False }
+        net_cfg = get_net(autoencoder_basic, args)
+        print "untied"
+        args = { "learning_rate": 0.01, "sigma":1., "nonlinearity":rectify, "f":128, "tied":True }
+        net_cfg = get_net(autoencoder_basic, args)
+
+    # --------------------------------------------------------
+    # what-where autoencoder inspired architecture experiments
+    # --------------------------------------------------------
+
+    
+        
+                
 
     """
     for epoch in range(10):
