@@ -4,6 +4,12 @@ from os.path import isfile, join, isdir
 import re
 import numpy as np
 from matplotlib import pyplot as plt
+import os
+import sys
+from shutil import copyfile
+import imp
+from lasagne.layers import *
+from sklearn.manifold import TSNE
 
 import itertools
 def make_time_slice(dataset, time, variables, x=768, y=1152):
@@ -142,7 +148,6 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
     # for each day (out of 365 days)
     day=0
     for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, days=days, month1=month1, day1=day1):  #tensor is 8,16,768,1152
-        print "day", day
         # preprocess for day
         tensor, min_, max_ = normalize(tensor)
         #TODO: preprocess over everything
@@ -177,7 +182,9 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
                 for b in range(0, num_examples, batch_size):
                     res = time_slice[b:b+batch_size]
                     cls = classes[b:b+batch_size]
+                    cls = cls.astype('int32')
                     yield res, cls
+        day = day + 1
 
 def normalize(arr,min_=None, max_=None, axis=(0,2,3)):
         if min_ is None or max_ is None:
@@ -192,14 +199,90 @@ def normalize(arr,min_=None, max_=None, axis=(0,2,3)):
         arr = (arr - midrange) / (range_ /2.)
         return arr, min_, max_
     
-import os
 
-import sys
 
-from shutil import copyfile
-import imp
+def plot_learn_curve(tr_losses, val_losses, save_dir='.'):
+    plt.clf()
+    plt.plot(tr_losses)
+    plt.plot(val_losses)
+    plt.savefig(save_dir + '/learn_curve.png')
+    plt.clf()
+    
+def plot_clusters(i,x,y,net_cfg, save_dir='.'):
+    x = np.squeeze(x)
+    hid_L = net_cfg['h_fn'](x)
+    ts = TSNE().fit_transform(hid_L)
+    plt.clf()
+    plt.scatter(ts[:,0], ts[:,1], c=y)
+    plt.savefig(save_dir + '/cluster_%i.png'%(i))
+    plt.clf()
 
-#print os.getcwd()
+def plot_recs(i,x,net_cfg, save_dir='.'):
+    ind = np.random.randint(0,x.shape[0], size=(1,))
+    x=np.squeeze(x)
+    #print x.shape
+    im = x[ind]
+    #print im.shape
+    rec = net_cfg['out_fn'](im)
+    ch=1
+    plt.figure(figsize=(30,30))
+    plt.clf()
+    for (p_im, p_rec) in zip(im[0],rec[0]):
+        p1 = plt.subplot(im.shape[1],2, ch )
+        p2 = plt.subplot(im.shape[1],2, ch + 1)
+        p1.imshow(p_im)
+        p2.imshow(p_rec)
+        ch = ch+2
+    #plt.show()
+    plt.savefig(save_dir +'/recs_%i' %(i))
+
+def plot_filters(network, save_dir='.'):
+    plt.figure(figsize=(30,30))
+    plt.clf()
+    lay_ind = 0
+    num_channels_to_plot = 16
+    convlayers = [layer for layer in get_all_layers(network) if isinstance(layer, Conv2DLayer)]
+    num_layers = len(convlayers)
+    spind = 1 
+    for layer in convlayers:
+        filters = layer.get_params()[0].eval()
+        #pick a random filter
+        filt = filters[np.random.randint(0,filters.shape[0])]
+        for ch_ind in range(num_channels_to_plot):
+            p1 = plt.subplot(num_layers,num_channels_to_plot, spind )
+            p1.imshow(filt[ch_ind], cmap="gray")
+            spind = spind + 1
+    
+    #plt.show()
+    plt.savefig(save_dir +'/filters.png')
+            
+        
+def plot_feature_maps(i, x, network, save_dir='.'):
+    plt.figure(figsize=(30,30))
+    plt.clf()
+    ind = np.random.randint(0,x.shape[0])
+    x=np.squeeze(x)
+
+    im = x[ind]
+    convlayers = [layer for layer in get_all_layers(network) if not isinstance(layer,DenseLayer)]
+    num_layers = len(convlayers)
+    spind = 1 
+    num_fmaps_to_plot = 16
+    for ch in range(num_fmaps_to_plot):
+        p1 = plt.subplot(num_layers + 1,num_fmaps_to_plot, spind )
+        p1.imshow(im[ch])
+        spind = spind + 1
+      
+    for layer in convlayers:
+        # shape is batch_size, num_filters, x,y 
+        fmaps = get_output(layer,x ).eval()
+        for fmap_ind in range(num_fmaps_to_plot):
+            p1 = plt.subplot(num_layers + 1,num_fmaps_to_plot, spind )
+            p1.imshow(fmaps[ind][fmap_ind])
+            spind = spind + 1
+    
+    #plt.show()
+    plt.savefig(save_dir +'/fmaps.png')
 
 def create_run_dir(custom_rc=False):
     results_dir = os.getcwd() + '/results'

@@ -197,6 +197,7 @@ if __name__ == "__main__":
         plt.scatter(ts[:,0], ts[:,1], c=y)
         pass
         plt.savefig(run_dir + '/cluster.png')
+        plt.clf()
 
     
         
