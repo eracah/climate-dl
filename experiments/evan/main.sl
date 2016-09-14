@@ -6,4 +6,4 @@
 #SBATCH --qos=premium
 
 module load deeplearning
-python adversarial_ae.py
+python $@
