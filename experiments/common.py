@@ -13,25 +13,20 @@ from sklearn.manifold import TSNE
 
 import itertools
 
-def dense_conv(args):
+def make_dense_conv_encoder(args):
     conv_kwargs = dict(filter_size=3, pad=1, nonlinearity=args["nonlinearity"])
     inp = InputLayer(args["input_shape"])
     conc = Conv2DLayer(inp, num_filters=args['k0'], **conv_kwargs)
     conv_kwargs.update({'num_filters': args['k']})
-    block_layers = [conc]
     for j in range(args['B']):
-        for i in range(args['L']):
-            bn = BatchNormLayer(conc)
-            bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
-            bn_relu_conv = Conv2DLayer(bn_relu, **conv_kwargs)
-            block_layers.append(bn_relu_conv)
-            conc = ConcatLayer(block_layers, axis=1)
-        
+        conc = make_dense_block(conc, args, conv_kwargs=conv_kwargs)
         if j < args['B']:
-            conv = Conv2DLayer(conc, num_filters=conc.output_shape[1], filter_size=1)
-            conc = Pool2DLayer(conv,pool_size=2,stride=2, mode='average_exc_pad')
-            block_layers=[conc]
-    
+            conc = make_trans_layer(conc, args)
+    return conc
+
+            
+def make_dense_conv_classifier(args):  
+    conc = make_dense_conv_encoder(args)
     conc = Pool2DLayer(conc, pool_size=2, stride=2,mode='average_exc_pad')
     sm = DenseLayer(conc, num_units=args['num_classes'], nonlinearity=softmax)
     for layer in get_all_layers(sm):
@@ -39,6 +34,25 @@ def dense_conv(args):
     print count_params(layer)
     print sm.output_shape
     return sm
+
+    
+
+def make_dense_block(inp, args, conv_kwargs={}):
+        conc = inp
+        block_layers = [conc]
+        for i in range(args['L']):
+            bn = BatchNormLayer(conc)
+            bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
+            bn_relu_conv = Conv2DLayer(bn_relu, **conv_kwargs)
+            block_layers.append(bn_relu_conv)
+            conc = ConcatLayer(block_layers, axis=1)
+        return conc
+
+def make_trans_layer(inp,args):
+    conc = inp
+    conv = Conv2DLayer(conc, num_filters=conc.output_shape[1], filter_size=1)
+    conc = Pool2DLayer(conv,pool_size=2,stride=2, mode='average_exc_pad')
+    return conc
 
 
 def make_time_slice(dataset, time, variables, x=768, y=1152):
