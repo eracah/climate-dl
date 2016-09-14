@@ -219,8 +219,9 @@ except:
     
     
 args = { "learning_rate": 0.01, "sigma":0.1, "shape": (None,16,128,128),
-        'code_size': 2048, 'nfilters': 128, 'lrec': 1, 'num_classes': 3, "with_classif_loss": False }
+        'code_size': 16384 , 'nfilters': 128, 'lrec': 1, 'num_classes': 3, "with_classif_loss": False }
 net_cfg = get_net(autoencoder_basic_32, args)
+
 
 
 tr_losses = []
@@ -235,6 +236,7 @@ for epoch in range(num_epochs):
         #print iteration
         x = np.squeeze(x)
         print x.shape
+        
         loss = net_cfg['train_fn'](x)
         tr_loss += loss
     
@@ -263,8 +265,8 @@ for epoch in range(num_epochs):
     if epoch % 5 == 0:
         plot_filters(net_cfg['l_out'], save_dir=run_dir)
         for iteration, (x,y) in enumerate(data_iterator(batch_size=batch_size, step_size=128, days=1, month1='01', day1='01')):
-            plot_recs(iteration,x, save_dir=run_dir)
-            plot_clusters(iteration,x,y, save_dir=run_dir)
+            plot_recs(iteration,x,net_cfg=net_cfg, save_dir=run_dir)
+            plot_clusters(iteration,x,y,net_cfg=net_cfg, save_dir=run_dir)
             plot_feature_maps(iteration,x,net_cfg['l_out'], save_dir=run_dir)
             break;
         

@@ -12,6 +12,35 @@ from lasagne.layers import *
 from sklearn.manifold import TSNE
 
 import itertools
+
+def dense_conv(args):
+    conv_kwargs = dict(filter_size=3, pad=1, nonlinearity=args["nonlinearity"])
+    inp = InputLayer(args["input_shape"])
+    conc = Conv2DLayer(inp, num_filters=args['k0'], **conv_kwargs)
+    conv_kwargs.update({'num_filters': args['k']})
+    block_layers = [conc]
+    for j in range(args['B']):
+        for i in range(args['L']):
+            bn = BatchNormLayer(conc)
+            bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
+            bn_relu_conv = Conv2DLayer(bn_relu, **conv_kwargs)
+            block_layers.append(bn_relu_conv)
+            conc = ConcatLayer(block_layers, axis=1)
+        
+        if j < args['B']:
+            conv = Conv2DLayer(conc, num_filters=conc.output_shape[1], filter_size=1)
+            conc = Pool2DLayer(conv,pool_size=2,stride=2, mode='average_exc_pad')
+            block_layers=[conc]
+    
+    conc = Pool2DLayer(conc, pool_size=2, stride=2,mode='average_exc_pad')
+    sm = DenseLayer(conc, num_units=args['num_classes'], nonlinearity=softmax)
+    for layer in get_all_layers(sm):
+        print  layer, layer.output_shape
+    print count_params(layer)
+    print sm.output_shape
+    return sm
+
+
 def make_time_slice(dataset, time, variables, x=768, y=1152):
     '''Takes in a dataset, a time and variables and gets one time slice for all the variables and all x and y'''
     variables_at_time_slice = [dataset[k][time] for k in variables]
@@ -233,7 +262,7 @@ def plot_recs(i,x,net_cfg, save_dir='.'):
         p1.imshow(p_im)
         p2.imshow(p_rec)
         ch = ch+2
-    #plt.show()
+    #pass
     plt.savefig(save_dir +'/recs_%i' %(i))
 
 def plot_filters(network, save_dir='.'):
@@ -253,7 +282,7 @@ def plot_filters(network, save_dir='.'):
             p1.imshow(filt[ch_ind], cmap="gray")
             spind = spind + 1
     
-    #plt.show()
+    #pass
     plt.savefig(save_dir +'/filters.png')
             
         
@@ -281,7 +310,7 @@ def plot_feature_maps(i, x, network, save_dir='.'):
             p1.imshow(fmaps[ind][fmap_ind])
             spind = spind + 1
     
-    #plt.show()
+    #pass
     plt.savefig(save_dir +'/fmaps.png')
 
 def create_run_dir(custom_rc=False):

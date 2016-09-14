@@ -6,4 +6,4 @@
 #SBATCH --qos=premium
 
 module load deeplearning
-python denoising_conv_ae.py
+python adversarial_ae.py
