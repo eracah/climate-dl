@@ -18,10 +18,13 @@ import sys
 from time import time
 sys.path.append("..")
 import common
+sys.path.append("stl10/")
+import stl10
 from psutil import virtual_memory
 from pylab import rcParams
 rcParams['figure.figsize'] = 15, 20
 import pdb
+from architectures import *
 
 # -------------------------------------
 
@@ -62,187 +65,6 @@ def get_net(net_cfg, args):
         "l_out": l_out
     }
 
-def make_inverse(l_in, layer):
-    if isinstance(layer, Conv2DLayer):
-        return Deconv2DLayer(l_in, layer.input_shape[1], layer.filter_size, stride=layer.stride, crop=layer.pad,
-                             nonlinearity=layer.nonlinearity)
-    else:
-        return InverseLayer(l_in, layer)
-
-def what_where_stl10_arch(args={"nonlinearity": rectify, "tied":False, "tanh_end":False}):
-    #(64)3c-4p-(64)3c-3p-(128)3c-(128)3c-2p-(256)3c-(256)3c-(256)3c-(512)3c-(512)3c-(512)3c-2p-10fc 
-    # not sure if i got the strides right? they don't make it
-    # clear in their paper...
-    # ---------
-    # also, they mention having batch-norm on a per feature map basis, so let's do this too
-    conv = InputLayer((None, 16, 96, 96))
-    conv = Conv2DLayer(conv, num_filters=64, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=4, stride=4)
-    conv = Conv2DLayer(conv, num_filters=64, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=3, stride=1)
-    conv = Conv2DLayer(conv, num_filters=128, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=128, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=2, stride=1)
-    conv = Conv2DLayer(conv, num_filters=256, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=256, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=256, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=2, stride=1)
-    #conv = DenseLayer(conv, num_units=10)
-    l_out = conv
-    final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
-    ladder = []
-    for a,b in zip(decoder_layers, encoder_layers[::-1]):
-        ladder += [a,b]
-    return final_out, ladder
-
-def get_encoder_and_decoder(l_out):
-    encoder_layers = [layer for layer in get_all_layers(l_out) if isinstance(layer, Conv2DLayer) ]
-    decoder_layers = []
-    conv = l_out
-    for layer in get_all_layers(l_out)[::-1]:
-        if isinstance(layer, InputLayer):
-            break
-        conv = InverseLayer(conv, layer)
-        if isinstance(conv.input_layers[-1], Conv2DLayer):
-            decoder_layers.append(conv)
-    return conv, decoder_layers, encoder_layers
-    
-def what_where_stl10_arch_beefier(args={"nonlinearity": rectify, "tied":False, "tanh_end":False}):
-    conv = InputLayer((None, 16, 96, 96))
-    conv = Conv2DLayer(conv, num_filters=128, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=4, stride=4)
-    conv = Conv2DLayer(conv, num_filters=128, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=3, stride=1)
-    conv = Conv2DLayer(conv, num_filters=256, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=256, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=2, stride=1)
-    conv = Conv2DLayer(conv, num_filters=384, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=384, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=384, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=args["nonlinearity"]); conv = BatchNormLayer(conv, axes=[0, 2, 3])
-    conv = MaxPool2DLayer(conv, pool_size=2, stride=1)
-    #conv = DenseLayer(conv, num_units=10)
-    for layer in get_all_layers(conv)[::-1]:
-        if isinstance(layer, InputLayer):
-            break
-        if args["tied"]:
-            conv = InverseLayer(conv, layer)
-        else:
-            conv = make_inverse(conv, layer)
-    if args["tanh_end"]:
-        # evan pre-procced the imgs to be [-1, 1]
-        conv = NonlinearityLayer(conv, nonlinearity=tanh)
-    for layer in get_all_layers(conv):
-        print layer, layer.output_shape
-    print count_params(layer)
-    return conv
-    
-def massive_1_deep(args):
-    conv = InputLayer((None,16,128,128))
-    conv = GaussianNoiseLayer(conv, args["sigma"])
-    for i in range(0,1):
-        conv = Conv2DLayer(conv, num_filters=1024, filter_size=9, stride=1, nonlinearity=args["nonlinearity"])
-        conv = MaxPool2DLayer(conv, pool_size=5, stride=4)
-    #conv = DenseLayer(conv, num_units=1024, nonlinearity=args["nonlinearity"])
-    for layer in get_all_layers(conv)[::-1]:
-        if isinstance(layer, InputLayer):
-            break
-        conv = InverseLayer(conv, layer)
-    for layer in get_all_layers(conv):
-        print layer, layer.output_shape
-    print count_params(layer)
-    return conv    
-
-def autoencoder_basic(args={"f":32, "d":4096, "tied":True}):
-    conv = InputLayer((None,16,128,128))
-    conv = GaussianNoiseLayer(conv, args["sigma"])
-    for i in range(0, 4):
-        conv = Conv2DLayer(conv, num_filters=(i+1)*args["f"], filter_size=3, nonlinearity=args["nonlinearity"])
-        #if i != 3:
-        conv = MaxPool2DLayer(conv, pool_size=2)
-    # coding layer
-    if "d" in args:
-        conv = DenseLayer(conv, num_units=args["d"], nonlinearity=args["nonlinearity"])
-    for layer in get_all_layers(conv)[::-1]:
-        if isinstance(layer, InputLayer):
-            break
-        if args["tied"]:
-            conv = InverseLayer(conv, layer)
-        else:
-            conv = make_inverse(conv, layer)
-    for layer in get_all_layers(conv):
-        print layer, layer.output_shape
-    print count_params(layer)
-    return conv
-
-def autoencoder_basic_double_up(args={"f":32, "d":4096}):
-    conv = InputLayer((None,16,128,128))
-    conv = GaussianNoiseLayer(conv, args["sigma"])
-    for i in range(0, 4):
-        for j in range(2):
-            conv = Conv2DLayer(conv, num_filters=(i+1)*args["f"], filter_size=3, nonlinearity=args["nonlinearity"])
-        #if i != 3:
-        conv = MaxPool2DLayer(conv, pool_size=2)
-    # coding layer
-    if "d" in args:
-        conv = DenseLayer(conv, num_units=args["d"], nonlinearity=args["nonlinearity"])
-    for layer in get_all_layers(conv)[::-1]:
-        if isinstance(layer, InputLayer):
-            break
-        conv = InverseLayer(conv, layer)
-    for layer in get_all_layers(conv):
-        print layer, layer.output_shape
-    print count_params(layer)
-    return conv
-
-def autoencoder_basic_double_up_512(args):
-    conv = InputLayer((None,16,128,128))
-    conv = GaussianNoiseLayer(conv, args["sigma"])
-    for i in range(0, 4):
-        for j in range(2):
-            conv = Conv2DLayer(conv, num_filters=(i+1)*args["f"], filter_size=3, nonlinearity=args["nonlinearity"])
-        if i != 3:
-            conv = MaxPool2DLayer(conv, pool_size=2)
-    for j in range(2):
-        conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=args["nonlinearity"])
-    # coding layer
-    if "d" in args:
-        conv = DenseLayer(conv, num_units=args["d"], nonlinearity=args["nonlinearity"])
-    for layer in get_all_layers(conv)[::-1]:
-        if isinstance(layer, InputLayer):
-            break
-        conv = InverseLayer(conv, layer)
-    for layer in get_all_layers(conv):
-        print layer, layer.output_shape
-    print count_params(layer)
-    return conv
-
-def autoencoder_basic_double_up_512_stride(args={"f":32, "d":4096}):
-    conv = InputLayer((None,16,128,128))
-    conv = GaussianNoiseLayer(conv, args["sigma"])
-    for i in range(0, 4):
-        for j in range(2):
-            conv = Conv2DLayer(conv, num_filters=(i+1)*args["f"], filter_size=3, nonlinearity=softplus)
-        if i != 3:
-            conv = Conv2DLayer(conv, num_filters=(i+1)*args["f"], filter_size=3, stride=2, nonlinearity=softplus)
-    for j in range(2):
-        conv = Conv2DLayer(conv, num_filters=512, filter_size=3, nonlinearity=softplus)
-    # coding layer
-    if "d" in args:
-        conv = DenseLayer(conv, num_units=args["d"], nonlinearity=softplus)
-    for layer in get_all_layers(conv)[::-1]:
-        if isinstance(layer, InputLayer):
-            break
-        conv = InverseLayer(conv, layer)
-    for layer in get_all_layers(conv):
-        print layer, layer.output_shape
-    print count_params(layer)
-    return conv
 
 def iterate(X_train, bs=32):
     b = 0
@@ -251,7 +73,17 @@ def iterate(X_train, bs=32):
             break
         yield X_train[b*bs:(b+1)*bs]
         b += 1
-
+    
+        
+def get_iterator(name, batch_size, data_dir, days, img_size):
+    # for stl10, 'days' and 'data_dir' does not make
+    # any sense
+    assert name in ["climate", "stl10"]
+    if name == "climate":
+        return common.data_iterator(batch_size, data_dir, days=days, img_size=img_size)
+    elif name == "stl10":
+        return stl10.data_iterator(batch_size)
+        
 def train(cfg,
         num_epochs,
         out_folder,
@@ -261,6 +93,7 @@ def train(cfg,
         tmp_folder="tmp",
         days=1,
         data_dir="/storeSSD/cbeckham/nersc/big_images/",
+        dataset="climate",
         img_size=128,
         resume=None,
         debug=True):
@@ -282,9 +115,10 @@ def train(cfg,
                 sys.stderr.write("changing learning rate to: %f\n" % sched[epoch+1])
             train_losses = []
             first_minibatch = True
-            for X_train, y_train in common.data_iterator(batch_size, data_dir, days=days, img_size=img_size):
-                # shape is (32, 1, 16, 128, 128), so collapse to a 4d tensor
-                X_train = X_train.reshape(X_train.shape[0], X_train.shape[2], X_train.shape[3], X_train.shape[4])
+            for X_train, y_train in get_iterator(dataset, batch_size, data_dir, days=days, img_size=img_size):
+                if dataset == "climate":
+                    # shape is (32, 1, 16, 128, 128), so collapse to a 4d tensor
+                    X_train = X_train.reshape(X_train.shape[0], X_train.shape[2], X_train.shape[3], X_train.shape[4])
                 if first_minibatch:
                     X_train_sample = X_train[0:1]
                     first_minibatch = False
@@ -298,10 +132,16 @@ def train(cfg,
             img_reconstruct = out_fn(img_orig)
             #pdb.set_trace()
             img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
-            for j in range(0,32):
-                plt.subplot(8,4,j+1)
-                plt.imshow(img_composite[j])
-                plt.axis('off')
+            if dataset == "climate":
+                for j in range(0,32):
+                    plt.subplot(8,4,j+1)
+                    plt.imshow(img_composite[j])
+                    plt.axis('off')
+            elif dataset == "stl10":
+                for j in range(0,6):
+                    plt.subplot(3,2,j+1)
+                    plt.imshow(img_composite[j])
+                    plt.axis('off')
             plt.savefig('%s/%i.png' % (out_folder, epoch))
             pyplot.clf()
              
@@ -454,7 +294,87 @@ if __name__ == "__main__":
         args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "tied":False, "ladder":0.001, "optim":"adam" }
         net_cfg = get_net(what_where_stl10_arch, args)
         train(net_cfg, num_epochs=300, batch_size=32, img_size=96, out_folder="output/ww_stl10_exp1_elu_adam_ladder2", sched={100:0.001,200:0.0001})                            
+    if "WW_STL10_EXP1_ELU_ADAM_LADDER3" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "tied":False, "ladder":0.00001, "optim":"adam" }
+        net_cfg = get_net(what_where_stl10_arch, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, out_folder="output/ww_stl10_exp1_elu_adam_ladder3", sched={100:0.001,200:0.0001})                            
+    if "WW_STL10_EXP1_ELU_LADDER3" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "tied":False, "ladder":0.00001 }
+        net_cfg = get_net(what_where_stl10_arch, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, out_folder="output/ww_stl10_exp1_elu_ladder3", sched={100:0.001,200:0.0001})                            
 
+    # ---------
+
+    if "STL10_TEST" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "tied":False, "input_channels":3 }
+        net_cfg = get_net(what_where_stl10_arch, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="stl10", out_folder="output/stl10_test", sched={100:0.001,200:0.0001})                            
+    if "STL10_TEST_BS128" in os.environ:
+        args = { "learning_rate": 0.1, "sigma":0., "nonlinearity":rectify, "tied":False, "input_channels":3 }
+        net_cfg = get_net(what_where_stl10_arch, args)
+        train(net_cfg, num_epochs=300, batch_size=128, img_size=96, dataset="stl10", out_folder="output/stl10_test_bs128", sched={100:0.001,200:0.0001})
+    if "STL10_TEST_BS128_BN512" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":rectify, "tied":False, "input_channels":3, "bottleneck":512 }
+        net_cfg = get_net(what_where_stl10_arch, args)
+        train(net_cfg, num_epochs=300, batch_size=128, img_size=96, dataset="stl10", out_folder="output/stl10_test_bs128_bn512")
+
+    # #######################################################################################################
+    # I had to run some experiments on STL-10 since I couldn't get anything reasonable on the climate data.
+    # Because I had to luck reproducing the autoencoder architecture in what-where, I used this arch instead:
+    # https://arxiv.org/pdf/1511.06409.pdf (section 3.2)
+    # #######################################################################################################
+        
+    if "DELETEME4" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., }
+        net_cfg = get_net(stl10_test_4, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="stl10", out_folder="output/stl_test_4")
+    if "DELETEME4_SIGMA5" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0.5, }
+        net_cfg = get_net(stl10_test_4, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="stl10", out_folder="output/stl_test_4_sigma0.5")
+    if "DELETEME4_BOTTLENECK" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
+        net_cfg = get_net(stl10_test_4, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="stl10", out_folder="output/stl_test_4_bottleneck512")
+    if "DELETEME4_BOTTLENECK_SIGMA5" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0.5, "bottleneck":512 }
+        net_cfg = get_net(stl10_test_4, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="stl10", out_folder="output/stl_test_4_bottleneck512_sigma5")
+
+    # ##################################
+    # Ok, let's try this s--t on climate
+    # ##################################
+        
+    if "CLIMATE_BOTTLENECK512" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", out_folder="output/climate_bottleneck512")        
+    if "CLIMATE_BOTTLENECK512_SIGMA05" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0.5, "bottleneck":512 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", out_folder="output/climate_bottleneck512_sigma0.5")
+    if "CLIMATE_BOTTLENECK512_SIGMA10" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":1., "bottleneck":512 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", out_folder="output/climate_bottleneck512_sigma1.0")
+
+    # #######################
+    # Try 5 days instead of 1
+    # #######################
+        
+    if "CLIMATE_5DAY_BOTTLENECK512" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", days=5, out_folder="output/climate_5day_bottleneck512")
+
+        
+    if "STL10_TEST_BS128_ADAM" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "tied":False, "input_channels":3, "optim":"adam" }
+        net_cfg = get_net(what_where_stl10_arch, args)
+        train(net_cfg, num_epochs=300, batch_size=128, img_size=96, dataset="stl10", out_folder="output/stl10_test_bs128_adam", sched={100:0.001,200:0.0001})                            
+    
+        
+        
     """
     for epoch in range(10):
         for X_train, y_train in common.data_iterator(128, "/storeSSD/cbeckham/nersc/big_images/", days=1):
