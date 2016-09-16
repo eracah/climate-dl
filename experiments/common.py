@@ -259,7 +259,7 @@ def get_slices(img, labels, img_size=128, step_size=20):
     
     return np.asarray(slices, dtype=img.dtype), np.asarray(classes)
 
-def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False, step_size=20, days=365,month1='01', day1='01'):
+def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False, img_size=128, step_size=20, days=365,month1='01', day1='01'):
     '''
     Args:
        batch_size: number of examples in a batch
@@ -292,7 +292,7 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
         
         #print spatiotemporal_tensor.shape
         for ind, spt_chunk in enumerate(spatiotemporal_tensor):
-            time_slices_with_class = get_slices(spt_chunk, labels=labels[ind], step_size=step_size)        
+            time_slices_with_class = get_slices(spt_chunk, labels=labels[ind], step_size=step_size, img_size=img_size)        
             # for each time step that day (there are 8 time steps
             # with 3 hr gaps, so 8*3 = 24 hrs)
             for (time_slice, classes) in [time_slices_with_class]:
