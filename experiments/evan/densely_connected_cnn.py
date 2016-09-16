@@ -115,25 +115,56 @@ def get_net(net_cfg, args):
 
 
 
-def dense_conv(args):
-    conv_kwargs = dict(filter_size=3, pad=1, nonlinearity=args["nonlinearity"])
+def get_net_ae(net_cfg, args):
+    l_out, hid_layer = net_cfg(args)
+ 
+    X = T.tensor4('X')
+    Y = T.ivector('Y')
+    net_out = get_output(l_out, X)
+    hid_out = get_output(hid_layer, X)
+
+    
+    clsf_loss = get_classifier_loss(hid_layer,X,Y,args)
+    rec_loss = squared_error(net_out, X).mean()
+    if args['with_classif_loss']:
+        loss = args['lrec'] * rec_loss + clsf_loss
+        inputs = [X,Y]
+    else:
+        loss = rec_loss
+        inputs=[X]
+    params = get_all_params(l_out, trainable=True)
+    lr = theano.shared(floatX(args["learning_rate"]))
+    updates = nesterov_momentum(loss, params, learning_rate=lr, momentum=0.9)
+    train_fn = theano.function(inputs, loss, updates=updates)
+    loss_fn = theano.function(inputs, loss)
+    out_fn = theano.function([X], net_out)
+    hid_fn = theano.function([X],hid_out)
+    return {
+        "train_fn": train_fn,
+        "loss_fn": loss_fn,
+        "out_fn": out_fn,
+        "lr": lr,
+        "l_out": l_out,
+        "h_fn": hid_fn,
+
+    }
+
+
+
+def make_dense_conv_encoder(args):
+    conv_kwargs = dict(filter_size=3, pad=1, nonlinearity=args['nonlinearity'])
     inp = InputLayer(args["input_shape"])
     conc = Conv2DLayer(inp, num_filters=args['k0'], **conv_kwargs)
-    conv_kwargs.update({'num_filters': args['k']})
-    block_layers = [conc]
+    conv_kwargs.update({'num_filters': args['k'], 'nonlinearity': None})
     for j in range(args['B']):
-        for i in range(args['L']):
-            bn = BatchNormLayer(conc)
-            bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
-            bn_relu_conv = Conv2DLayer(bn_relu, **conv_kwargs)
-            block_layers.append(bn_relu_conv)
-            conc = ConcatLayer(block_layers, axis=1)
-        
-        if j < args['B']:
-            conv = Conv2DLayer(conc, num_filters=conc.output_shape[1], filter_size=1)
-            conc = Pool2DLayer(conv,pool_size=2,stride=2, mode='average_exc_pad')
-            block_layers=[conc]
-    
+        conc = make_dense_block(conc, args, conv_kwargs=conv_kwargs)
+        if j < args['B'] - 1:
+            conc = make_trans_layer(conc, args)
+    return conc
+
+            
+def make_dense_conv_classifier(args):  
+    conc = make_dense_conv_encoder(args)
     conc = Pool2DLayer(conc, pool_size=2, stride=2,mode='average_exc_pad')
     sm = DenseLayer(conc, num_units=args['num_classes'], nonlinearity=softmax)
     for layer in get_all_layers(sm):
@@ -144,10 +175,130 @@ def dense_conv(args):
 
     
 
+def make_dense_block(inp, args, conv_kwargs={}):
+        conc = inp
+        block_layers = [conc]
+        for i in range(args['L']):
+            bn = BatchNormLayer(conc)
+            bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
+            bn_relu_conv = Conv2DLayer(bn_relu, **conv_kwargs)
+            block_layers.append(bn_relu_conv)
+            conc = ConcatLayer(block_layers, axis=1)
+        return conc
+
+def make_trans_layer(inp,args):
+    conc = inp
+    conv = Conv2DLayer(conc, num_filters=conc.output_shape[1], filter_size=1)
+    conc = Pool2DLayer(conv, pool_size=2,stride=2, mode='average_exc_pad')
+    return conc
 
 
-args = {"B":2, "L": 5, 'k':3, 'k0':16, "num_classes":10, "input_shape": (None,1,28,28), "learning_rate": 0.01, "sigma":0.1, "nonlinearity":elu, "f":128, "tied":False }
-net_cfg = get_net(dense_conv, args)
+
+def make_inverse_trans_layer(inp, layer):
+    conc = inp
+    #because trans layers are 2 layerrs log
+    for lay in get_all_layers(layer)[::-1][:2]:
+        #print "*******************\n\n",lay, "\n\n********************\n\n"
+        conc = make_inverse(conc, lay)
+    
+    #return whole network and next layer we are going to invert
+    return conc, lay.input_layer
+
+
+
+def make_inverse_dense_block(inp, layer, args):
+    conc = inp
+    block_layers = [conc]
+    #3 layers per comp unit and args['L'] units per block
+    for lay in get_all_layers(layer)[::-1][:4*args['L']]:
+        if isinstance(lay, Conv2DLayer):
+            conc = BatchNormLayer(conc)
+            conc = make_inverse(conc, lay, filters=args['k'])
+            conc = NonlinearityLayer(conc, nonlinearity=args['nonlinearity'])
+            block_layers.append(conc)
+            if args['concat_inver']:
+                conc = ConcatLayer(block_layers,axis=1)
+            
+    return conc, lay.input_layer
+            
+        
+    
+
+
+
+import nolearn
+
+
+
+def make_inverse(l_in, layer, filters=None):
+    
+    if isinstance(layer, Conv2DLayer):
+        if filters is None:
+            filters = layer.input_shape[1]
+        return Deconv2DLayer(l_in, filters, layer.filter_size, stride=layer.stride, crop=layer.pad,
+                             nonlinearity=layer.nonlinearity)
+    elif isinstance(layer, Pool2DLayer) or isinstance(layer, DenseLayer):
+        return InverseLayer(l_in, layer)
+    else:
+        return l_in
+
+
+
+def make_dense_conv_autoencoder(args):
+    conc = make_dense_conv_encoder(args)
+    conc = make_trans_layer(conc, args)
+    last_conv_shape = tuple([k if k is not None else [i] for i,k in enumerate(get_output_shape(conc,args['input_shape']))] )
+    hid_lay = DenseLayer(conc, num_units=args['num_fc_units'])
+    rec = DenseLayer(hid_lay,num_units=np.prod(last_conv_shape[1:]))
+    conc = ReshapeLayer(rec, shape=last_conv_shape)
+    
+    
+    for layer in get_all_layers(conc)[::-1]:
+        if not isinstance(layer, DenseLayer) and not isinstance(layer, ReshapeLayer):
+            break
+        
+    for i in range(args['B']):
+        conc, layer = make_inverse_trans_layer(conc, layer)
+        #print "lol: ", layer
+        conc, layer = make_inverse_dense_block(conc, layer, args)
+        
+
+    for lay in get_all_layers(layer)[::-1]:
+        if isinstance(lay, InputLayer):
+            break
+        conc = make_inverse(conc, lay)
+    for layer_ in get_all_layers(conc):
+            print  layer_, layer_.output_shape
+    print count_params(layer_)
+    
+    
+    return conc
+            
+            
+    
+    
+    
+
+
+
+args = {"B":2, "L": 2, 'k':3, 'k0':16, "num_classes":10, "num_fc_units":100,'concat_inver':True, "input_shape": (None,1,28,28), "learning_rate": 0.01, "sigma":0.1, "nonlinearity":elu, "f":128, "tied":False }
+#net_cfg = get_net(make_dense_conv_classifier, args)
+
+
+
+cnet = make_dense_conv_classifier(args)
+
+
+
+net = make_dense_conv_autoencoder(args)
+
+
+
+from nolearn import lasagne as ls
+
+
+
+ls.visualize
 
 
 
@@ -214,6 +365,14 @@ for epoch in range(num_epochs):
 
 
 
+draw_to_file(get_all_layers(net), "./cim.eps")
+
+
+
+
+
+
+matplotlib.use('agg')
 
 
 
