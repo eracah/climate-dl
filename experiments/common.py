@@ -27,7 +27,9 @@ def make_dense_conv_encoder(args):
             
 def make_dense_conv_classifier(args):  
     conc = make_dense_conv_encoder(args)
-    conc = Pool2DLayer(conc, pool_size=2, stride=2,mode='average_exc_pad')
+    bn = BatchNormLayer(conc)
+    bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
+    conc = GlobalPoolLayer(bn_relu) #Pool2DLayer(conc, pool_size=2, stride=2,mode='average_exc_pad')
     sm = DenseLayer(conc, num_units=args['num_classes'], nonlinearity=softmax)
     for layer in get_all_layers(sm):
         print  layer, layer.output_shape
@@ -45,12 +47,14 @@ def make_dense_block(inp, args, conv_kwargs={}):
             bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
             bn_relu_conv = Conv2DLayer(bn_relu, **conv_kwargs)
             block_layers.append(bn_relu_conv)
-            conc = ConcatLayer(block_layers, axis=1)
+            conc = ConcatLayer([conc, bn_relu_conv], axis=1)
         return conc
 
 def make_trans_layer(inp,args):
     conc = inp
-    conv = Conv2DLayer(conc, num_filters=conc.output_shape[1], filter_size=1)
+    bn = BatchNormLayer(conc)
+    bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
+    conv = Conv2DLayer(bn_relu, num_filters=conc.output_shape[1], filter_size=1)
     conc = Pool2DLayer(conv, pool_size=2,stride=2, mode='average_exc_pad')
     return conc
 
