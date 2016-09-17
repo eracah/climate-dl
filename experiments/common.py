@@ -14,22 +14,26 @@ from sklearn.manifold import TSNE
 import itertools
 
 def make_dense_conv_encoder(args):
-    conv_kwargs = dict(filter_size=3, pad=1, nonlinearity=args['nonlinearity'])
+    conv_kwargs = dict(filter_size=3, pad=1, nonlinearity=args['nonlinearity'], W=lasagne.init.HeNormal())
     inp = InputLayer(args["input_shape"])
+    if "sigma" in args:
+        inp = GaussianNoiseLayer(inp, sigma=args['sigma'])
     conc = Conv2DLayer(inp, num_filters=args['k0'], **conv_kwargs)
     conv_kwargs.update({'num_filters': args['k'], 'nonlinearity': None})
     for j in range(args['B']):
         conc = make_dense_block(conc, args, conv_kwargs=conv_kwargs)
         if j < args['B'] - 1:
             conc = make_trans_layer(conc, args)
+    bn = BatchNormLayer(conc)
+    bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
+    conc = GlobalPoolLayer(bn_relu)
     return conc
+
+
 
             
 def make_dense_conv_classifier(args):  
     conc = make_dense_conv_encoder(args)
-    bn = BatchNormLayer(conc)
-    bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
-    conc = GlobalPoolLayer(bn_relu) #Pool2DLayer(conc, pool_size=2, stride=2,mode='average_exc_pad')
     sm = DenseLayer(conc, num_units=args['num_classes'], nonlinearity=softmax)
     for layer in get_all_layers(sm):
         print  layer, layer.output_shape
@@ -58,75 +62,92 @@ def make_trans_layer(inp,args):
     conc = Pool2DLayer(conv, pool_size=2,stride=2, mode='average_exc_pad')
     return conc
 
-def make_inverse_trans_layer(inp, layer):
+def make_inverse_trans_layer(inp, layer,args):
     conc = inp
     #because trans layers are 2 layerrs log
     for lay in get_all_layers(layer)[::-1][:2]:
-        #print "*******************\n\n",lay, "\n\n********************\n\n"
-        conc = make_inverse(conc, lay)
+        conc = make_inverse(conc, lay,args)
     
     #return whole network and next layer we are going to invert
     return conc, lay.input_layer
 
 def make_inverse_dense_block(inp, layer, args):
     conc = inp
-    block_layers = [conc]
+
     #3 layers per comp unit and args['L'] units per block
     for lay in get_all_layers(layer)[::-1][:4*args['L']]:
-        if isinstance(lay, Conv2DLayer):
-            conc = BatchNormLayer(conc)
-            conc = make_inverse(conc, lay, filters=args['k'])
-            conc = NonlinearityLayer(conc, nonlinearity=args['nonlinearity'])
-            block_layers.append(conc)
-            if args['concat_inver']:
-                conc = ConcatLayer(block_layers,axis=1)
+        if isinstance(lay, ConcatLayer):
+            conc = make_inverse(conc,lay,args)
+            
+#             conc = BatchNormLayer(conc)
+#             conc = make_inverse(conc, lay, filters=args['k'])
+#             conc = NonlinearityLayer(conc, nonlinearity=args['nonlinearity'])
+#             block_layers.append(conc)
+#             if args['concat_inver']:
+#                 conc = ConcatLayer(block_layers,axis=1)
             
     return conc, lay.input_layer
             
         
     
 
-def make_inverse(l_in, layer, filters=None):
+def make_inverse(l_in, layer,args):
     
     if isinstance(layer, Conv2DLayer):
-        if filters is None:
-            filters = layer.input_shape[1]
-        return Deconv2DLayer(l_in, filters, layer.filter_size, stride=layer.stride, crop=layer.pad,
-                             nonlinearity=layer.nonlinearity)
-    elif isinstance(layer, Pool2DLayer) or isinstance(layer, DenseLayer):
+        if 'dec_batch_norm' in args and args['dec_batch_norm']:
+            l_in = batch_norm(l_in)
+        if 'tied_weights' in args and args['tied_weights']:
+            l_in = InverseLayer(l_in,layer)
+        else:
+            l_in = Deconv2DLayer(l_in, layer.input_shape[1], layer.filter_size, stride=layer.stride, crop=layer.pad, nonlinearity=layer.nonlinearity)
+        return NonlinearityLayer(l_in, nonlinearity=args['nonlinearity'])
+        
+#         if filters is None:
+#             filters = layer.input_shape[1]
+#         return 
+    elif isinstance(layer, Pool2DLayer) or isinstance(layer, GlobalPoolLayer) or isinstance(layer, DenseLayer):
         return InverseLayer(l_in, layer)
+    elif isinstance(layer, ConcatLayer):
+        first_input_shape = layer.input_shapes[0][layer.axis]
+        return SliceLayer(l_in,indices=slice(0,first_input_shape), axis=layer.axis)
+               #SliceLayer(l_in,indices=slice(first_input_shape, -1), axis=layer.axis )
     else:
         return l_in
 
 def make_dense_conv_autoencoder(args):
     conc = make_dense_conv_encoder(args)
-    conc = make_trans_layer(conc, args)
-    last_conv_shape = tuple([k if k is not None else [i] for i,k in enumerate(get_output_shape(conc,args['input_shape']))] )
     hid_lay = DenseLayer(conc, num_units=args['num_fc_units'])
-    rec = DenseLayer(hid_lay,num_units=np.prod(last_conv_shape[1:]))
-    conc = ReshapeLayer(rec, shape=last_conv_shape)
-    
-    
+    conc = hid_lay
     for layer in get_all_layers(conc)[::-1]:
-        if not isinstance(layer, DenseLayer) and not isinstance(layer, ReshapeLayer):
+        if isinstance(layer, ConcatLayer):
             break
+        else:
+            conc = make_inverse(conc,layer,args)
         
     for i in range(args['B']):
-        conc, layer = make_inverse_trans_layer(conc, layer)
-        #print "lol: ", layer
         conc, layer = make_inverse_dense_block(conc, layer, args)
+        if i < args['B'] - 1:
+                conc, layer = make_inverse_trans_layer(conc, layer, args)
+    
         
 
     for lay in get_all_layers(layer)[::-1]:
         if isinstance(lay, InputLayer):
             break
-        conc = make_inverse(conc, lay)
+        args['nonlinearity'] = tanh
+        conc = make_inverse(conc, lay,args)
+        
     for layer_ in get_all_layers(conc):
             print  layer_, layer_.output_shape
     print count_params(layer_)
     
     
-    return conc
+    return conc, hid_lay
+            
+            
+    
+    
+    
             
             
     
@@ -330,81 +351,7 @@ def plot_learn_curve(tr_losses, val_losses, save_dir='.'):
     plt.savefig(save_dir + '/learn_curve.png')
     plt.clf()
     
-def plot_clusters(i,x,y,net_cfg, save_dir='.'):
-    x = np.squeeze(x)
-    hid_L = net_cfg['h_fn'](x)
-    ts = TSNE().fit_transform(hid_L)
-    plt.clf()
-    plt.scatter(ts[:,0], ts[:,1], c=y)
-    plt.savefig(save_dir + '/cluster_%i.png'%(i))
-    plt.clf()
 
-def plot_recs(i,x,net_cfg, save_dir='.'):
-    ind = np.random.randint(0,x.shape[0], size=(1,))
-    x=np.squeeze(x)
-    #print x.shape
-    im = x[ind]
-    #print im.shape
-    rec = net_cfg['out_fn'](im)
-    ch=1
-    plt.figure(figsize=(30,30))
-    plt.clf()
-    for (p_im, p_rec) in zip(im[0],rec[0]):
-        p1 = plt.subplot(im.shape[1],2, ch )
-        p2 = plt.subplot(im.shape[1],2, ch + 1)
-        p1.imshow(p_im)
-        p2.imshow(p_rec)
-        ch = ch+2
-    #pass
-    plt.savefig(save_dir +'/recs_%i' %(i))
-
-def plot_filters(network, save_dir='.'):
-    plt.figure(figsize=(30,30))
-    plt.clf()
-    lay_ind = 0
-    num_channels_to_plot = 16
-    convlayers = [layer for layer in get_all_layers(network) if isinstance(layer, Conv2DLayer)]
-    num_layers = len(convlayers)
-    spind = 1 
-    for layer in convlayers:
-        filters = layer.get_params()[0].eval()
-        #pick a random filter
-        filt = filters[np.random.randint(0,filters.shape[0])]
-        for ch_ind in range(num_channels_to_plot):
-            p1 = plt.subplot(num_layers,num_channels_to_plot, spind )
-            p1.imshow(filt[ch_ind], cmap="gray")
-            spind = spind + 1
-    
-    #pass
-    plt.savefig(save_dir +'/filters.png')
-            
-        
-def plot_feature_maps(i, x, network, save_dir='.'):
-    plt.figure(figsize=(30,30))
-    plt.clf()
-    ind = np.random.randint(0,x.shape[0])
-    x=np.squeeze(x)
-
-    im = x[ind]
-    convlayers = [layer for layer in get_all_layers(network) if not isinstance(layer,DenseLayer)]
-    num_layers = len(convlayers)
-    spind = 1 
-    num_fmaps_to_plot = 16
-    for ch in range(num_fmaps_to_plot):
-        p1 = plt.subplot(num_layers + 1,num_fmaps_to_plot, spind )
-        p1.imshow(im[ch])
-        spind = spind + 1
-      
-    for layer in convlayers:
-        # shape is batch_size, num_filters, x,y 
-        fmaps = get_output(layer,x ).eval()
-        for fmap_ind in range(num_fmaps_to_plot):
-            p1 = plt.subplot(num_layers + 1,num_fmaps_to_plot, spind )
-            p1.imshow(fmaps[ind][fmap_ind])
-            spind = spind + 1
-    
-    #pass
-    plt.savefig(save_dir +'/fmaps.png')
 
 def create_run_dir(custom_rc=False):
     results_dir = os.getcwd() + '/results'
