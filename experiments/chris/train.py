@@ -31,11 +31,13 @@ from architectures import *
 def get_net(net_cfg, args):
     l_out, ladder = net_cfg(args)            
     X = T.tensor4('X')
-    net_out = get_output(l_out, X)
-    ladder_output = get_output(ladder, X)
+    #net_out = get_output(l_out, X)
+    ladder_output = get_output([l_out] + ladder, X)
+    net_out = ladder_output[0]
     # squared error loss is between the first two terms
     loss = squared_error(net_out, X).mean()
     sys.stderr.write("main loss between %s and %s\n" % (str(l_out.output_shape), "X") )
+    ladder_output = ladder_output[1::]
     if "ladder" in args:
         sys.stderr.write("using ladder connections for conv\n")        
         for i in range(0, len(ladder_output), 2):
@@ -43,6 +45,8 @@ def get_net(net_cfg, args):
             assert ladder[i].output_shape == ladder[i+1].output_shape
             loss += args["ladder"]*squared_error(ladder_output[i], ladder_output[i+1]).mean()
     net_out_det = get_output(l_out, X, deterministic=True)
+    # this is deterministic + doesn't have the reg params added to the end
+    loss_det = squared_error(net_out_det, X).mean()
     params = get_all_params(l_out, trainable=True)
     lr = theano.shared(floatX(args["learning_rate"]))
     if "optim" not in args:
@@ -54,7 +58,7 @@ def get_net(net_cfg, args):
             updates = adam(loss, params, learning_rate=lr)
     #updates = adadelta(loss, params, learning_rate=lr)
     #updates = rmsprop(loss, params, learning_rate=lr)
-    train_fn = theano.function([X], loss, updates=updates)
+    train_fn = theano.function([X], [loss, loss_det], updates=updates)
     loss_fn = theano.function([X], loss)
     out_fn = theano.function([X], net_out_det)
     return {
@@ -105,8 +109,8 @@ def train(cfg,
     #if resume != None:
     #    
     with open("%s/results.txt" % out_folder, "wb") as f:
-        f.write("epoch,avg_train_loss,avg_valid_loss,time\n")
-        print "epoch,avg_train_loss,avg_valid_loss,time"
+        f.write("epoch,avg_train_loss,avg_train_loss_det,avg_valid_loss,time\n")
+        print "epoch,avg_train_loss,avg_train_loss_det,avg_valid_loss,time"
         for epoch in range(0, num_epochs):
             t0 = time()
             # learning rate schedule
@@ -114,6 +118,7 @@ def train(cfg,
                 lr.set_value( floatX(sched[epoch+1]) )
                 sys.stderr.write("changing learning rate to: %f\n" % sched[epoch+1])
             train_losses = []
+            train_losses_det = []
             first_minibatch = True
             for X_train, y_train in get_iterator(dataset, batch_size, data_dir, days=days, img_size=img_size):
                 if dataset == "climate":
@@ -122,7 +127,9 @@ def train(cfg,
                 if first_minibatch:
                     X_train_sample = X_train[0:1]
                     first_minibatch = False
-                train_losses.append(train_fn(X_train))
+                this_loss, this_loss_det = train_fn(X_train)
+                train_losses.append(this_loss)
+                train_losses_det.append(this_loss_det)
                 #pdb.set_trace()                
             if debug:
                 mem = virtual_memory()
@@ -152,8 +159,8 @@ def train(cfg,
             # time
             time_taken = time() - t0
             # print statistics
-            print "%i,%f,%f,%f" % (epoch+1, np.mean(train_losses), np.mean(valid_losses), time_taken)
-            f.write("%i,%f,%f,%f\n" % (epoch+1, np.mean(train_losses), np.mean(valid_losses), time_taken))
+            print "%i,%f,%f,%f,%f" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken)
+            f.write("%i,%f,%f,%f,%f\n" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken))
             f.flush()
             # save model at each epoch
             if not os.path.exists("%s/%s" % (model_folder, out_folder)):
@@ -366,7 +373,22 @@ if __name__ == "__main__":
         args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
         net_cfg = get_net(climate_test_1, args)
         train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", days=5, out_folder="output/climate_5day_bottleneck512")
+    if "CLIMATE_5DAY_BOTTLENECK512_LADDER0001" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512, "ladder":0.001 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", days=5, out_folder="output/climate_5day_bottleneck512_ladder0001")
 
+
+    if "CLIMATE_20DAY_BOTTLENECK512" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", days=20, out_folder="output/climate_20day_bottleneck512")
+
+    if "CLIMATE_50DAY_BOTTLENECK512" in os.environ:
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", days=50, out_folder="output/climate_50day_bottleneck512")
+        
         
     if "STL10_TEST_BS128_ADAM" in os.environ:
         args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "tied":False, "input_channels":3, "optim":"adam" }
