@@ -218,7 +218,7 @@ def get_chunk_class(boxes, chunk_coords):
 
 import pdb
 
-def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False, days=365, month1='01', day1='01'):
+def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False, start_day=1, end_day=365, month1='01', day1='01'):
     """
     This iterator will return tensors of dimension (8, 16, 768, 1152) 
     each tensor corresponding to one of the 365 days of the year
@@ -249,7 +249,7 @@ def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/
     prefix = 'cam5_1_amip_run2.cam2.h2.1979'
     suffix = '00000.nc'
     ind= camfiles.index('-'.join([prefix, month1, day1, suffix]))
-    camfiles = camfiles[ind:ind+days]
+    camfiles = camfiles[ind+(start_day-1):ind+end_day] # [
     if shuffle:
         np.random.shuffle(camfiles)
     for camfile in camfiles:
@@ -266,7 +266,7 @@ def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/
 def get_slices(img, labels, img_size=128, step_size=20):
     '''
     input: time_chunk_size, 16, 768,1152 tensor
-    returns: array of overlapping time_chunk_size,16,128,128 tensors'''
+    returns: iterator of overlapping time_chunk_size,16,128,128 tensors'''
     slices = []
     classes = []
     height, width = img.shape[-2], img.shape[-1]
@@ -274,13 +274,23 @@ def get_slices(img, labels, img_size=128, step_size=20):
         for x in range(0, width, step_size):
             chunk = img[:,:, y:y+img_size, x:x+img_size]
             cls = get_chunk_class(labels, (x, x+img_size, y, y+img_size))
-            classes.append(cls)
+            #classes.append(cls)
             if chunk.shape[2:] == (img_size,img_size):
-                slices.append(chunk)
-    
-    return np.asarray(slices, dtype=img.dtype), np.asarray(classes)
+                #slices.append(chunk)
+                yield chunk, cls
+    #pdb.set_trace()
+    #return np.asarray(slices, dtype=img.dtype), np.asarray(classes)
 
-def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", time_chunks_per_example=1, shuffle=False, img_size=128, step_size=20, days=365,month1='01', day1='01'):
+def data_iterator(batch_size,
+                  data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/",
+                  time_chunks_per_example=1,
+                  shuffle=False,
+                  img_size=128,
+                  step_size=20,
+                  start_day=1,
+                  end_day=365,
+                  month1='01',
+                  day1='01'):
     '''
     Args:
        batch_size: number of examples in a batch
@@ -290,7 +300,7 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
     '''
     # for each day (out of 365 days)
     day=0
-    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, days=days, month1=month1, day1=day1):  #tensor is 8,16,768,1152
+    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, start_day=start_day, end_day=end_day, month1=month1, day1=day1):  #tensor is 8,16,768,1152
         # preprocess for day
         tensor, min_, max_ = normalize(tensor)
         #TODO: preprocess over everything
@@ -312,22 +322,29 @@ def data_iterator(batch_size, data_dir="/project/projectdirs/dasrepo/gordon_bell
         #for (time_slice, classes) in time_slices_with_classes: ...
         
         #print spatiotemporal_tensor.shape
+        x_buf, y_buf = [], []
+        # for each day
+        
         for ind, spt_chunk in enumerate(spatiotemporal_tensor):
-            time_slices_with_class = get_slices(spt_chunk, labels=labels[ind], step_size=step_size, img_size=img_size)        
-            # for each time step that day (there are 8 time steps
-            # with 3 hr gaps, so 8*3 = 24 hrs)
-            for (time_slice, classes) in [time_slices_with_class]:
-
-                # we'll get e.g. ~2000 slices (at 128px), and now we run these
-                # through the batch size iterator to get these in 128-size batches
-                # for the gpu
-                num_examples = time_slice.shape[0]
-                for b in range(0, num_examples, batch_size):
-                    res = time_slice[b:b+batch_size]
-                    cls = classes[b:b+batch_size]
-                    cls = cls.astype('int32')
-                    yield res, cls
-        day = day + 1
+            # for each w*h px chunk
+            for chunk, cls_ in get_slices(spt_chunk, labels=labels[ind], step_size=step_size, img_size=img_size):
+                if len(x_buf) == batch_size:
+                    x_buf = np.asarray(x_buf, dtype=x_buf[0].dtype)
+                    y_buf = np.asarray(y_buf, dtype="int32")
+                    yield x_buf, y_buf
+                    x_buf = []
+                    y_buf = []
+                else:
+                    x_buf.append(chunk)
+                    y_buf.append(cls_)
+            # if there is left over stuff in the buffer in the end, yield that too
+            if len(x_buf) != 0:
+                x_buf = np.asarray(x_buf, dtype=x_buf[0].dtype)
+                y_buf = np.asarray(y_buf, dtype="int32")                
+                yield x_buf, y_buf
+                x_buf = []
+                y_buf = []
+            day = day + 1
 
 def normalize(arr,min_=None, max_=None, axis=(0,2,3)):
         if min_ is None or max_ is None:

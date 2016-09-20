@@ -29,8 +29,11 @@ from architectures import *
 # -------------------------------------
 
 def get_net(net_cfg, args):
-    l_out, ladder = net_cfg(args)            
-    X = T.tensor4('X')
+    l_out, ladder = net_cfg(args)
+    if args["mode"] == "2d":
+        X = T.tensor4('X')
+    elif args["mode"] == "3d":
+        X = T.tensor5('X')
     #net_out = get_output(l_out, X)
     ladder_output = get_output([l_out] + ladder, X)
     net_out = ladder_output[0]
@@ -79,12 +82,12 @@ def iterate(X_train, bs=32):
         b += 1
     
         
-def get_iterator(name, batch_size, data_dir, days, img_size):
+def get_iterator(name, batch_size, data_dir, start_day, end_day, img_size, time_chunks_per_example):
     # for stl10, 'days' and 'data_dir' does not make
     # any sense
     assert name in ["climate", "stl10"]
     if name == "climate":
-        return common.data_iterator(batch_size, data_dir, days=days, img_size=img_size)
+        return common.data_iterator(batch_size, data_dir, start_day=start_day, end_day=end_day, img_size=img_size, time_chunks_per_example=time_chunks_per_example)
     elif name == "stl10":
         return stl10.data_iterator(batch_size)
         
@@ -95,12 +98,45 @@ def train(cfg,
         batch_size=128,
         model_folder="/storeSSD/cbeckham/nersc/models/",
         tmp_folder="tmp",
-        days=1,
+        training_days=[1,20],
+        validation_days=[345,365],
+        time_chunks_per_example=1,
         data_dir="/storeSSD/cbeckham/nersc/big_images/",
         dataset="climate",
         img_size=128,
         resume=None,
         debug=True):
+    
+    def prep_batch(X_batch):
+        if dataset == "climate":
+            if time_chunks_per_example == 1:
+                # shape is (32, 1, 16, 128, 128), so collapse to a 4d tensor
+                X_batch = X_batch.reshape(X_batch.shape[0], X_batch.shape[2], X_batch.shape[3], X_batch.shape[4])
+            else:
+                # right now it is: (bs, time, nchannels, height, width)
+                # needs to be: (bs, nchannels, time, height, width)
+                X_batch = X_batch.reshape(X_batch.shape[0], X_batch.shape[2], X_batch.shape[1], X_batch.shape[3], X_batch.shape[4])
+        else:
+            pass # nothing needs to be done for stl-10
+        return X_batch
+
+    def plot_image(img_composite):
+        if dataset == "climate":
+            for j in range(0,32):
+                plt.subplot(8,4,j+1)
+                if time_chunks_per_example > 1:
+                    plt.imshow(img_composite[j][0])
+                else:
+                    plt.imshow(img_composite[j])
+                plt.axis('off')
+        elif dataset == "stl10":
+            for j in range(0,6):
+                plt.subplot(3,2,j+1)
+                plt.imshow(img_composite[j])
+                plt.axis('off')
+        plt.savefig('%s/%i.png' % (out_folder, epoch))
+        pyplot.clf()
+        
     # extract methods
     train_fn, loss_fn, out_fn, l_out = cfg["train_fn"], cfg["loss_fn"], cfg["out_fn"], cfg["l_out"]
     lr = cfg["lr"]
@@ -109,8 +145,9 @@ def train(cfg,
     #if resume != None:
     #    
     with open("%s/results.txt" % out_folder, "wb") as f:
-        f.write("epoch,avg_train_loss,avg_train_loss_det,avg_valid_loss,time\n")
-        print "epoch,avg_train_loss,avg_train_loss_det,avg_valid_loss,time"
+        headers = ["epoch", "avg_train_loss", "avg_train_loss_det", "avg_valid_loss", "time"]
+        f.write("%s\n" % ",".join(headers))
+        print "%s" % (",".join(headers))
         for epoch in range(0, num_epochs):
             t0 = time()
             # learning rate schedule
@@ -119,46 +156,33 @@ def train(cfg,
                 sys.stderr.write("changing learning rate to: %f\n" % sched[epoch+1])
             train_losses = []
             train_losses_det = []
+            valid_losses = []
             first_minibatch = True
-            for X_train, y_train in get_iterator(dataset, batch_size, data_dir, days=days, img_size=img_size):
-                if dataset == "climate":
-                    # shape is (32, 1, 16, 128, 128), so collapse to a 4d tensor
-                    X_train = X_train.reshape(X_train.shape[0], X_train.shape[2], X_train.shape[3], X_train.shape[4])
+            # TRAINING LOOP
+            for X_train, y_train in get_iterator(dataset, batch_size, data_dir, start_day=training_days[0], end_day=training_days[1],
+                                                 img_size=img_size, time_chunks_per_example=time_chunks_per_example):
+                X_train = prep_batch(X_train)
                 if first_minibatch:
                     X_train_sample = X_train[0:1]
                     first_minibatch = False
                 this_loss, this_loss_det = train_fn(X_train)
                 train_losses.append(this_loss)
                 train_losses_det.append(this_loss_det)
-                #pdb.set_trace()                
             if debug:
                 mem = virtual_memory()
                 print mem
+            # VALIDATION LOOP
+            for X_valid, y_valid in get_iterator(dataset, batch_size, data_dir, start_day=validation_days[0], end_day=validation_days[1],
+                                                  img_size=img_size, time_chunks_per_example=time_chunks_per_example):
+                X_valid = prep_batch(X_valid)
+                valid_losses.append(loss_fn(X_valid))
             # DEBUG: visualise the reconstructions
             img_orig = X_train_sample
             img_reconstruct = out_fn(img_orig)
-            #pdb.set_trace()
             img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
-            if dataset == "climate":
-                for j in range(0,32):
-                    plt.subplot(8,4,j+1)
-                    plt.imshow(img_composite[j])
-                    plt.axis('off')
-            elif dataset == "stl10":
-                for j in range(0,6):
-                    plt.subplot(3,2,j+1)
-                    plt.imshow(img_composite[j])
-                    plt.axis('off')
-            plt.savefig('%s/%i.png' % (out_folder, epoch))
-            pyplot.clf()
-             
-            valid_losses = []
-            # todo
-            #
-            #
-            # time
+            plot_image(img_composite)
+            # STATISTICS
             time_taken = time() - t0
-            # print statistics
             print "%i,%f,%f,%f,%f" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken)
             f.write("%i,%f,%f,%f,%f\n" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken))
             f.flush()
@@ -166,7 +190,7 @@ def train(cfg,
             if not os.path.exists("%s/%s" % (model_folder, out_folder)):
                 os.makedirs("%s/%s" % (model_folder, out_folder))
             with open("%s/%s/%i.model" % (model_folder, out_folder, epoch), "wb") as g:
-                pickle.dump( get_all_param_values(cfg["l_out"]), g, pickle.HIGHEST_PROTOCOL)
+                pickle.dump( get_all_param_values(cfg["l_out"]), g, pickle.HIGHEST_PROTOCOL )
 
 
 if __name__ == "__main__":
@@ -383,7 +407,45 @@ if __name__ == "__main__":
         args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
         net_cfg = get_net(climate_test_1, args)
         train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", days=20, out_folder="output/climate_20day_bottleneck512")
+    if "CLIMATE_20DAY_BOTTLENECK512_DET" in os.environ:
+        seed = 1
+        lasagne.random.set_rng( np.random.RandomState(seed) )
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", training_days=[1,20], validation_days=[325,345], out_folder="output/climate_20day_bottleneck512_det")
 
+    if "TEST" in os.environ:
+        seed = 1
+        lasagne.random.set_rng( np.random.RandomState(seed) )
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512, "mode":"2d" }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", training_days=[1,1], validation_days=[2,2], out_folder="output/deleteme")
+
+        
+    # ---------------------
+    # let's try out 3d conv
+    # ---------------------
+
+    if "CLIMATE_1DAY_3D_TEST" in os.environ:
+        seed = 1
+        lasagne.random.set_rng( np.random.RandomState(seed) )
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":1024, "mode":"3d" }
+        net_cfg = get_net(climate_test_1_3d, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate",
+              training_days=[1,2], validation_days=[10,11], out_folder="output/climate_1day_3d_test", time_chunks_per_example=8)
+
+
+    if "CLIMATE_1DAY_3D_TEST_2" in os.environ:
+        seed = 1
+        lasagne.random.set_rng( np.random.RandomState(seed) )
+        args = { "learning_rate": 0.1, "sigma":0., "bottleneck":1024, "mode":"3d" }
+        net_cfg = get_net(climate_test_1_3d, args)
+        train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate",
+              training_days=[1,2], validation_days=[10,11], out_folder="output/climate_1day_3d_test_2", time_chunks_per_example=8)
+
+
+        
+        
     if "CLIMATE_50DAY_BOTTLENECK512" in os.environ:
         args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512 }
         net_cfg = get_net(climate_test_1, args)
