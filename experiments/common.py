@@ -31,7 +31,7 @@ sys.path.append("..")
 #import common
 #sys.path.append("stl10/")
 # import stl10
-from psutil import virtual_memory
+#from psutil import virtual_memory
 from pylab import rcParams
 rcParams['figure.figsize'] = 15, 20
 import pdb
@@ -96,12 +96,12 @@ def iterate(X_train, bs=32):
         b += 1
     
         
-def get_iterator(name, batch_size, data_dir, start_day, end_day, img_size, time_chunks_per_example, step_size):
+def get_iterator(name, batch_size, data_dir, start_day, end_day, img_size, time_chunks_per_example, step_size, time_steps):
     # for stl10, 'days' and 'data_dir' does not make
     # any sense
     assert name in ["climate", "stl10"]
     if name == "climate":
-        return data_iterator(batch_size, data_dir, start_day=start_day, end_day=end_day, img_size=img_size, time_chunks_per_example=time_chunks_per_example, step_size=step_size)
+        return data_iterator(batch_size, data_dir, start_day=start_day, end_day=end_day, img_size=img_size, time_chunks_per_example=time_chunks_per_example, step_size=step_size, time_steps=time_steps)
     elif name == "stl10":
         return stl10.data_iterator(batch_size)
         
@@ -120,7 +120,8 @@ def train(cfg,
         dataset="climate",
         img_size=128,
         resume=None,
-        debug=True):
+        debug=True,
+        time_steps=8):
     
     def prep_batch(X_batch):
         if dataset == "climate":
@@ -172,6 +173,10 @@ def train(cfg,
         return logger
     
     logger = get_logger()
+    num_train = (training_days[1] - training_days[0] + 1) * time_steps * (((1152 - img_size) / step_size) + 1) * (((768 - img_size) / step_size) + 1)
+    logger.info("train size: %i"%(num_train))
+    for layer in get_all_layers(l_out):
+        logger.info(str(layer) + ' ' +  str(layer.output_shape))
     for epoch in range(0, num_epochs):
         t0 = time()
         # learning rate schedule
@@ -184,7 +189,7 @@ def train(cfg,
         first_minibatch = True
         # TRAINING LOOP
         for X_train, y_train in get_iterator(dataset, batch_size, data_dir, start_day=training_days[0], end_day=training_days[1],
-                                        img_size=img_size,step_size=step_size,time_chunks_per_example=time_chunks_per_example):
+                                        img_size=img_size,step_size=step_size,time_chunks_per_example=time_chunks_per_example, time_steps=time_steps):
             X_train = prep_batch(X_train)
             if first_minibatch:
                 X_train_sample = X_train[0:1]
@@ -194,12 +199,12 @@ def train(cfg,
                 logger.info("iteration loss: %f" %this_loss)
             train_losses.append(this_loss)
             train_losses_det.append(this_loss_det)
-        if debug:
-            mem = virtual_memory()
-            print mem
+        # if debug:
+        #     mem = virtual_memory()
+        #     print mem
         # VALIDATION LOOP
         for X_valid, y_valid in get_iterator(dataset, batch_size, data_dir, start_day=validation_days[0], end_day=validation_days[1],
-                                              img_size=img_size, time_chunks_per_example=time_chunks_per_example, step_size=step_size):
+                                              img_size=img_size, time_chunks_per_example=time_chunks_per_example, step_size=step_size, time_steps=time_steps):
             X_valid = prep_batch(X_valid)
             val_loss = loss_fn(X_valid)
             if debug:
@@ -216,9 +221,9 @@ def train(cfg,
         logger.info("epoch %i of %i \n time: %f \n train loss: %6.3f \n val loss: %6.3f" % (epoch+1, num_epochs, time_taken, np.mean(train_losses), np.mean(valid_losses)))
 
         # save model at each epoch
-        if not os.path.exists("%s/%s" % (model_folder, out_folder)):
-            os.makedirs("%s/%s" % (model_folder, out_folder))
-        with open("%s/%s/%i.model" % (model_folder, out_folder, epoch), "wb") as g:
+        if not os.path.exists("%s/models/" % (out_folder)):
+            os.makedirs("%s/models/" % (out_folder))
+        with open("%s/models/%i.model" % (out_folder, epoch), "wb") as g:
             pickle.dump( get_all_param_values(cfg["l_out"]), g, pickle.HIGHEST_PROTOCOL )
 
 def make_dense_conv_encoder(args):
@@ -256,7 +261,7 @@ def make_dense_block(inp, args, conv_kwargs={}):
         block_layers = [conc]
         for i in range(args['L']):
             bn = BatchNormLayer(conc)
-            bn_relu = NonlinearityLayer(bn ,nonlinearity=args['nonlinearity'])
+            bn_relu = NonlinearityLayer(bn, nonlinearity=args['nonlinearity'])
             bn_relu_conv = Conv2DLayer(bn_relu, **conv_kwargs)
             block_layers.append(bn_relu_conv)
             conc = ConcatLayer([conc, bn_relu_conv], axis=1)
@@ -426,7 +431,7 @@ def get_chunk_class(boxes, chunk_coords):
 
 import pdb
 
-def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False, start_day=1, end_day=365, month1='01', day1='01'):
+def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False, start_day=1, end_day=365, month1='01', day1='01', time_steps=8):
     """
     This iterator will return tensors of dimension (8, 16, 768, 1152) 
     each tensor corresponding to one of the 365 days of the year
@@ -462,7 +467,6 @@ def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/
         np.random.shuffle(camfiles)
     for camfile in camfiles:
         dataset = nc.Dataset(maindir+'/'+camfile, "r", format="NETCDF4")
-        time_steps=8
         x=768
         y=1152
         day_slice = make_spatiotemporal_tensor(dataset,time_steps,variables) #one day slice per dataset
@@ -498,7 +502,8 @@ def data_iterator(batch_size,
                   start_day=1,
                   end_day=365,
                   month1='01',
-                  day1='01'):
+                  day1='01',
+                  time_steps=8):
     '''
     Args:
        batch_size: number of examples in a batch
@@ -508,7 +513,7 @@ def data_iterator(batch_size,
     '''
     # for each day (out of 365 days)
     day=0
-    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, start_day=start_day, end_day=end_day, month1=month1, day1=day1):  #tensor is 8,16,768,1152
+    for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, start_day=start_day, end_day=end_day, month1=month1, day1=day1, time_steps=time_steps):  #tensor is 8,16,768,1152
         # preprocess for day
         tensor, min_, max_ = normalize(tensor)
         #TODO: preprocess over everything
