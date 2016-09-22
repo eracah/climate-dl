@@ -222,8 +222,6 @@ args = { "learning_rate": 0.01, "sigma":0.1, "shape": (None,16,128,128),
         'code_size': 16384 , 'nfilters': 128, 'lrec': 1, 'num_classes': 3, "with_classif_loss": False }
 net_cfg = get_net(autoencoder_basic_32, args)
 
-
-
 tr_losses = []
 val_losses = []
 
@@ -235,7 +233,7 @@ for epoch in range(num_epochs):
     for iteration, (x, y) in enumerate(tr_iterator):
         #print iteration
         x = np.squeeze(x)
-        print x.shape
+
         
         loss = net_cfg['train_fn'](x)
         tr_loss += loss

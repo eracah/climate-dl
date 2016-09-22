@@ -5,5 +5,5 @@
 #SBATCH -o slurm_outputs/slurm-%A.out
 #SBATCH --qos=premium
 
-module load deeplearning
+module load inteltheano
 python $@
