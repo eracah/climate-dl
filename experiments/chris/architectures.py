@@ -6,6 +6,10 @@ from lasagne.objectives import *
 from lasagne.nonlinearities import *
 from lasagne.updates import *
 from lasagne.utils import *
+try:
+    from lasagne.layers import dnn
+except:
+    pass
 import numpy as np
 import cPickle as pickle
 import gzip
@@ -186,6 +190,22 @@ def climate_test_1(args={"sigma":0.}):
     conv = Conv2DLayer(conv, num_filters=128, filter_size=5, stride=2, nonlinearity=rectify)
     conv = Conv2DLayer(conv, num_filters=256, filter_size=5, stride=2, nonlinearity=rectify)
     conv = Conv2DLayer(conv, num_filters=512, filter_size=5, stride=2, nonlinearity=rectify)
+    if "bottleneck" in args:
+        conv = DenseLayer(conv, num_units=args["bottleneck"], nonlinearity=rectify)
+    l_out = conv
+    print_network(l_out)
+    final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    return final_out, ladder
+
+def climate_test_1_3d(args={"sigma":0.}):
+    conv = InputLayer((None,16,8,96,96))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=128, filter_size=(4,5,5), stride=(1,2,2), nonlinearity=rectify)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(3,5,5), stride=(1,2,2), nonlinearity=rectify)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(3,5,5), stride=(1,2,2), nonlinearity=rectify)
     if "bottleneck" in args:
         conv = DenseLayer(conv, num_units=args["bottleneck"], nonlinearity=rectify)
     l_out = conv
