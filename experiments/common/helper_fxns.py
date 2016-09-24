@@ -83,13 +83,13 @@ def make_dense_block(inp, args, conv_kwargs=dict(filter_size=3, pad=1)):
 
 def make_inverse_dense_block(inp, layer, args):
     conc = inp
-
+    inv_layers = get_all_layers(layer)[::-1]
     #3 layers per comp unit and args['L'] units per block
-    for lay in get_all_layers(layer)[::-1][:2*args['L']]:
-        if isinstance(lay, ConcatLayer):
-            conc = make_concat_inverse(conc,layer)
+    first_concat_lay = inv_layers[2*args['L']-2]
+    print first_concat_lay
+    conc = make_concat_inverse(conc,first_concat_lay)
             
-    return conc, lay.input_layer
+    return conc, inv_layers[2*args['L']]
 
 
 def make_concat_inverse(inp, concat_layer):
