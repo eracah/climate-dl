@@ -173,7 +173,7 @@ def data_iterator(batch_size,
     day=0
     for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, start_day=start_day, end_day=end_day, month1=month1, day1=day1, time_steps=time_steps):  #tensor is 8,16,768,1152
         # preprocess for day
-        tensor, min_, max_ = normalize(tensor)
+        tensor, min_, max_ = normalize_01(tensor)
         #TODO: preprocess over everything
         #TODO: split up into train,test, val
         time_chunks_per_day, variables, h, w = tensor.shape #time_chunks will be 8
@@ -230,6 +230,18 @@ def normalize(arr,min_=None, max_=None, axis=(0,2,3)):
         arr = (arr - midrange) / (range_ /2.)
         return arr, min_, max_
     
+def normalize_tmp(arr,min_=None, max_=None, axis=(0,2,3)):
+        if min_ is None or max_ is None:
+            min_ = arr.min(axis=(0,2,3), keepdims=True)
+
+            max_ = arr.max(axis=(0,2,3), keepdims=True)
+
+        midrange = (max_ + min_) / 2.
+
+        range_ = max_ - min_
+
+        arr = (arr - min_) / (max_ - min_)
+        return arr, min_, max_
 
 
 def plot_learn_curve(tr_losses, val_losses, save_dir='.'):
