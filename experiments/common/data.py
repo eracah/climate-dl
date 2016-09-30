@@ -150,7 +150,7 @@ def get_slices(img, labels, img_size=128, step_size=20):
                 yield chunk, cls
     #pdb.set_trace()
     #return np.asarray(slices, dtype=img.dtype), np.asarray(classes)
-
+    
 def data_iterator(batch_size,
                   data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/",
                   time_chunks_per_example=1,
@@ -173,7 +173,7 @@ def data_iterator(batch_size,
     day=0
     for tensor, labels in _day_iterator(data_dir=data_dir, shuffle=shuffle, start_day=start_day, end_day=end_day, month1=month1, day1=day1, time_steps=time_steps):  #tensor is 8,16,768,1152
         # preprocess for day
-        tensor, min_, max_ = normalize_01(tensor)
+        tensor, min_, max_ = normalize(tensor)
         #TODO: preprocess over everything
         #TODO: split up into train,test, val
         time_chunks_per_day, variables, h, w = tensor.shape #time_chunks will be 8
@@ -183,39 +183,41 @@ def data_iterator(batch_size,
         #reshapes the tensor into multiple spatiotemporal chunks of (chunk_size, 16, 768,1152)
         spatiotemporal_tensor = tensor.reshape(time_chunks_per_day / time_chunks_per_example, 
                                                time_chunks_per_example, variables, h ,w)
+        
         if shuffle:
             np.random.shuffle(spatiotemporal_tensor)
-        
-        #for each spt_chunk -> patches up chunk into (num_chunks, chunk_size, 16,128,128)
-        #time slices is list of multiple (num_chunks, chunk_size, 16,128,128) tensors
-        #old: memory intensive
-        #time_slices_with_classes = [ get_slices(spt_chunk, labels=labels[ind]) for ind, spt_chunk in enumerate(spatiotemporal_tensor)]
-        #for (time_slice, classes) in time_slices_with_classes: ...
-        
-        #print spatiotemporal_tensor.shape
-        x_buf, y_buf = [], []
-        # for each day
-        
-        for ind, spt_chunk in enumerate(spatiotemporal_tensor):
-            # for each w*h px chunk
-            for chunk, cls_ in get_slices(spt_chunk, labels=labels[ind], step_size=step_size, img_size=img_size):
-                if len(x_buf) == batch_size:
+
+        # yield chunks of the original image
+        if img_size > 0:
+            x_buf, y_buf = [], []
+            for ind, spt_chunk in enumerate(spatiotemporal_tensor):
+                # for each w*h px chunk
+                for chunk, cls_ in get_slices(spt_chunk, labels=labels[ind], step_size=step_size, img_size=img_size):
+                    if len(x_buf) == batch_size:
+                        x_buf = np.asarray(x_buf, dtype=x_buf[0].dtype)
+                        y_buf = np.asarray(y_buf, dtype="int32")
+                        yield x_buf, y_buf
+                        x_buf = []
+                        y_buf = []
+                    else:
+                        x_buf.append(chunk)
+                        y_buf.append(cls_)
+                # if there is left over stuff in the buffer in the end, yield that too
+                if len(x_buf) != 0:
                     x_buf = np.asarray(x_buf, dtype=x_buf[0].dtype)
                     y_buf = np.asarray(y_buf, dtype="int32")
                     yield x_buf, y_buf
                     x_buf = []
                     y_buf = []
-                else:
-                    x_buf.append(chunk)
-                    y_buf.append(cls_)
-            # if there is left over stuff in the buffer in the end, yield that too
-            if len(x_buf) != 0:
-                x_buf = np.asarray(x_buf, dtype=x_buf[0].dtype)
-                y_buf = np.asarray(y_buf, dtype="int32")                
-                yield x_buf, y_buf
-                x_buf = []
-                y_buf = []
-            day = day + 1
+                day = day + 1
+        else:
+            b = 0
+            while True:
+                if b*batch_size >= spatiotemporal_tensor.shape[0]:
+                    break
+                # todo: add labels
+                yield spatiotemporal_tensor[b*batch_size:(b+1)*batch_size], None
+                b += 1
 
 def normalize(arr,min_=None, max_=None, axis=(0,2,3)):
         if min_ is None or max_ is None:
@@ -254,10 +256,17 @@ def plot_learn_curve(tr_losses, val_losses, save_dir='.'):
 
 # little test/example
 if __name__ == "__main__":
+    """
     for x,y in data_iterator(batch_size=1716, time_chunks_per_example=1):
         
         # if any of the labels are not none
         if y[y>-3].shape[0] > 0:
             labelled_chunks = x[y>-3]
         print x.shape, y.shape
+    """
 
+    i = 0
+    for x,y in data_iterator(batch_size=1, time_chunks_per_example=1, img_size=-1, data_dir="/storeSSD/cbeckham/nersc/big_images/"):
+        i += 1
+    print i
+    assert i == 365*8

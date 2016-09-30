@@ -24,8 +24,8 @@ from psutil import virtual_memory
 from pylab import rcParams
 rcParams['figure.figsize'] = 15, 20
 import pdb
-from architectures import *
 import gan
+import architectures
 
 # -------------------------------------
 
@@ -82,16 +82,17 @@ def iterate(X_train, bs=32):
         yield X_train[b*bs:(b+1)*bs]
         b += 1
     
-        
-def get_iterator(name, batch_size, data_dir, start_day, end_day, img_size, time_chunks_per_example):
+
+def get_iterator(name, batch_size, data_dir, start_day, end_day, img_size, time_chunks_per_example, shuffle):
     # for stl10, 'days' and 'data_dir' does not make
     # any sense
     assert name in ["climate", "stl10"]
     if name == "climate":
-        return common.data_iterator(batch_size, data_dir, start_day=start_day, end_day=end_day, img_size=img_size, time_chunks_per_example=time_chunks_per_example)
+        return common.data_iterator(batch_size, data_dir, start_day=start_day, end_day=end_day, img_size=img_size, time_chunks_per_example=time_chunks_per_example, shuffle=shuffle)
     elif name == "stl10":
         return stl10.data_iterator(batch_size)
         
+
 def train(cfg,
         num_epochs,
         out_folder,
@@ -105,6 +106,7 @@ def train(cfg,
         data_dir="/storeSSD/cbeckham/nersc/big_images/",
         dataset="climate",
         img_size=128,
+        save_images_every=-1,
         resume=None,
         debug=True):
     
@@ -121,7 +123,7 @@ def train(cfg,
             pass # nothing needs to be done for stl-10
         return X_batch
 
-    def plot_image(img_composite):
+    def plot_image(img_composite, filename):
         if dataset == "climate":
             for j in range(0,32):
                 plt.subplot(8,4,j+1)
@@ -135,7 +137,7 @@ def train(cfg,
                 plt.subplot(3,2,j+1)
                 plt.imshow(img_composite[j])
                 plt.axis('off')
-        plt.savefig('%s/%i.png' % (out_folder, epoch))
+        plt.savefig(filename)
         pyplot.clf()
         
     # extract methods
@@ -143,54 +145,83 @@ def train(cfg,
     lr = cfg["lr"]
     if not os.path.exists(out_folder):
         os.makedirs(out_folder)
-    with open("%s/results.txt" % out_folder, "wb") as f:
-        headers = ["epoch", "avg_train_loss", "avg_train_loss_det", "avg_valid_loss", "time"]
-        f.write("%s\n" % ",".join(headers))
-        print "%s" % (",".join(headers))
-        for epoch in range(0, num_epochs):
-            t0 = time()
-            # learning rate schedule
-            if epoch+1 in sched:
-                lr.set_value( floatX(sched[epoch+1]) )
-                sys.stderr.write("changing learning rate to: %f\n" % sched[epoch+1])
-            train_losses = []
-            train_losses_det = []
-            valid_losses = []
-            first_minibatch = True
-            # TRAINING LOOP
-            for X_train, y_train in get_iterator(dataset, batch_size, data_dir, start_day=training_days[0], end_day=training_days[1],
-                                                 img_size=img_size, time_chunks_per_example=time_chunks_per_example):
-                X_train = prep_batch(X_train)
-                if first_minibatch:
-                    X_train_sample = X_train[0:1]
-                    first_minibatch = False
-                this_loss, this_loss_det = train_fn(X_train)
-                train_losses.append(this_loss)
-                train_losses_det.append(this_loss_det)
-            if debug:
-                mem = virtual_memory()
-                print mem
-            # VALIDATION LOOP
-            for X_valid, y_valid in get_iterator(dataset, batch_size, data_dir, start_day=validation_days[0], end_day=validation_days[1],
-                                                  img_size=img_size, time_chunks_per_example=time_chunks_per_example):
-                X_valid = prep_batch(X_valid)
-                valid_losses.append(loss_fn(X_valid))
-            # DEBUG: visualise the reconstructions
-            img_orig = X_train_sample
-            img_reconstruct = out_fn(img_orig)
-            img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
-            plot_image(img_composite)
-            # STATISTICS
-            time_taken = time() - t0
-            print "%i,%f,%f,%f,%f" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken)
-            f.write("%i,%f,%f,%f,%f\n" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken))
-            f.flush()
-            # save model at each epoch
-            if not os.path.exists("%s/%s" % (model_folder, out_folder)):
-                os.makedirs("%s/%s" % (model_folder, out_folder))
-            with open("%s/%s/%i.model" % (model_folder, out_folder, epoch), "wb") as g:
-                pickle.dump( get_all_param_values(cfg["l_out"]), g, pickle.HIGHEST_PROTOCOL )
 
+    # results on a per-epoch basis
+    f = open("%s/results.txt" % out_folder, "wb")
+    # results on a per-minibatch basis
+    f_train_raw = open("%s/results_train_raw.txt" % out_folder, "wb")
+    f_valid_raw = open("%s/results_valid_raw.txt" % out_folder, "wb")
+
+    headers = ["epoch", "avg_train_loss", "avg_train_loss_det", "avg_valid_loss", "time"]
+    headers_train_raw = ["train_loss", "train_loss_det"]
+    headers_valid_raw = ["valid_loss"]
+    
+    f.write("%s\n" % ",".join(headers))
+    f_train_raw.write("%s\n" % ",".join(headers_train_raw))
+    f_valid_raw.write("%s\n" % ",".join(headers_valid_raw))
+
+    print "%s" % (",".join(headers))
+    for epoch in range(0, num_epochs):
+        t0 = time()
+        # learning rate schedule
+        if epoch+1 in sched:
+            lr.set_value( floatX(sched[epoch+1]) )
+            sys.stderr.write("changing learning rate to: %f\n" % sched[epoch+1])
+        train_losses = []
+        train_losses_det = []
+        valid_losses = []
+        
+        first_minibatch = True
+        # TRAINING LOOP
+        nbatches = 0
+        for X_train, y_train in get_iterator(dataset, batch_size, data_dir, start_day=training_days[0], end_day=training_days[1],
+                                             img_size=img_size, time_chunks_per_example=time_chunks_per_example, shuffle=True):
+            X_train = prep_batch(X_train)
+            if first_minibatch:
+                X_train_sample = X_train[0:1]
+                first_minibatch = False
+            this_loss, this_loss_det = train_fn(X_train)
+            train_losses.append(this_loss)
+            train_losses_det.append(this_loss_det)
+            f_train_raw.write("%f,%f\n" % (this_loss, this_loss_det))
+            f_train_raw.flush()
+
+            nbatches += 1
+
+            if save_images_every != -1 and nbatches % save_images_every == 0:
+                img_orig = X_train_sample
+                img_reconstruct = out_fn(img_orig)
+                img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
+                plot_image(img_composite, '%s/%i_%i.png' % (out_folder, epoch, nbatches))
+            
+        if debug:
+            mem = virtual_memory()
+            print mem
+        # VALIDATION LOOP
+        for X_valid, y_valid in get_iterator(dataset, batch_size, data_dir, start_day=validation_days[0], end_day=validation_days[1],
+                                              img_size=img_size, time_chunks_per_example=time_chunks_per_example, shuffle=False):
+            X_valid = prep_batch(X_valid)
+            this_loss = loss_fn(X_valid)
+            valid_losses.append(this_loss)
+            f_valid_raw.write("%f\n" % this_loss)
+            f_valid_raw.flush()
+            
+        # DEBUG: visualise the reconstructions
+        img_orig = X_train_sample
+        img_reconstruct = out_fn(img_orig)
+        img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
+        plot_image(img_composite, '%s/%i.png' % (out_folder, epoch))
+        
+        # STATISTICS
+        time_taken = time() - t0
+        print "%i,%f,%f,%f,%f" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken)
+        f.write("%i,%f,%f,%f,%f\n" % (epoch+1, np.mean(train_losses), np.mean(train_losses_det), np.mean(valid_losses), time_taken))
+        f.flush()
+        # save model at each epoch
+        if not os.path.exists("%s/%s" % (model_folder, out_folder)):
+            os.makedirs("%s/%s" % (model_folder, out_folder))
+        with open("%s/%s/%i.model" % (model_folder, out_folder, epoch), "wb") as g:
+            pickle.dump( get_all_param_values(cfg["l_out"]), g, pickle.HIGHEST_PROTOCOL )
 
 
 
@@ -268,10 +299,12 @@ from collections import Counter
             
 def test_classes():
     classes = []
+    t0 = time()
     for X_batch, y_batch in get_iterator(name="climate", batch_size=1, data_dir="/storeSSD/cbeckham/nersc/big_images/", start_day=1, end_day=2,
         img_size=96, time_chunks_per_example=1):
         classes.append(y_batch[0])
     ct = Counter(classes)
+    print time()-t0
     pdb.set_trace()
                     
 
@@ -682,6 +715,29 @@ if __name__ == "__main__":
         net_cfg = get_net(climate_test_1, args)
         train(net_cfg, num_epochs=300, batch_size=32, img_size=96, dataset="climate", days=5, out_folder="output/climate_5day_bottleneck512_ladder0001")
 
+    # ##########
+    # Dense nets
+    # ##########
+
+    if "DENSE_NET_1" in os.environ:
+        #k = 3
+        #L = 3
+        for k in [4,5,6]:
+            for L in [3,4,5]:
+                seed = 1
+                lasagne.random.set_rng( np.random.RandomState(seed) )
+                args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512, "nf":[128-(k*L), 256-(k*L), 512-(k*L)], "k":k, "L":L, "mode":"2d" }
+                net_cfg = get_net(common.shared_architectures.climate_test_dense, args)
+                train(net_cfg, num_epochs=30, batch_size=128, img_size=96, dataset="climate", training_days=[1,2], validation_days=[320,321], out_folder="output/dense_net_1_128-256-512_k%i_l%i.%i" % (k, L, seed))
+    if "BASELINE_NO_DENSE_NET" in os.environ:
+        seed = 1
+        lasagne.random.set_rng( np.random.RandomState(seed) )
+        args = { "learning_rate": 0.01, "sigma":0., "bottleneck":512, "mode":"2d" }
+        net_cfg = get_net(climate_test_1, args)
+        train(net_cfg, num_epochs=30, batch_size=128, img_size=96, dataset="climate", training_days=[1,2], validation_days=[320,321], out_folder="output/no_dense_net_1_128-256-512.%i" % (seed))
+        
+        
+
     # ###############################
     # Generative adverserial networks
     # ###############################
@@ -763,12 +819,12 @@ if __name__ == "__main__":
         train_gan(
             net_cfg,
             num_epochs=300,
-            batch_size=64,
+            batch_size=128,
             img_size=96,
             dataset="climate",
             training_days=[1,20],
             validation_days=[325,345],
-            out_folder="output/gan_20day_dampen1_bs64",
+            out_folder="output/gan_20day_dampen1_bs128",
         )
     if "GAN_20DAY_NO_GAN_BS64" in os.environ:
         args = {"learning_rate": 0.01, "sigma":0., "bottleneck":512, "lr_encoder_decoder":0.01, "lr_discriminator":0.001,"lr_generator":0.001, "coef_discriminator":0.5, "coef_generator":0.1}
@@ -776,12 +832,12 @@ if __name__ == "__main__":
         train_gan(
             net_cfg,
             num_epochs=300,
-            batch_size=64,
+            batch_size=128,
             img_size=96,
             dataset="climate",
             training_days=[1,20],
             validation_days=[325,345],
-            out_folder="output/gan_no_gan_20day_dampen1_bs64",
+            out_folder="output/gan_no_gan_20day_dampen1_bs128",
             ignore_gan_part=True
         )
 
@@ -848,7 +904,55 @@ if __name__ == "__main__":
     if "STL10_TEST_BS128_ADAM" in os.environ:
         args = { "learning_rate": 0.01, "sigma":0., "nonlinearity":elu, "tied":False, "input_channels":3, "optim":"adam" }
         net_cfg = get_net(what_where_stl10_arch, args)
-        train(net_cfg, num_epochs=300, batch_size=128, img_size=96, dataset="stl10", out_folder="output/stl10_test_bs128_adam", sched={100:0.001,200:0.0001})                            
+        train(net_cfg, num_epochs=300, batch_size=128, img_size=96, dataset="stl10", out_folder="output/stl10_test_bs128_adam", sched={100:0.001,200:0.0001})
+
+    # ###############################
+    # Experiments on full-sized image
+    # ###############################
+
+    if "FULL_IMAGE_1" in os.environ:
+        args = {"learning_rate": 0.01, "mode":"2d" }
+        net_cfg = get_net(architectures.full_image_net_1, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1",
+            save_images_every=20
+        )
+    if "FULL_IMAGE_1_SIGMA5" in os.environ:
+        args = {"learning_rate": 0.01, "mode":"2d", "sigma":0.5 }
+        net_cfg = get_net(architectures.full_image_net_1, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1_sigma0.5",
+            save_images_every=100
+        )
+    if "FULL_IMAGE_1_SIGMA10" in os.environ:
+        args = {"learning_rate": 0.01, "mode":"2d", "sigma":1.0 }
+        net_cfg = get_net(architectures.full_image_net_1, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1_sigma1.0",
+            save_images_every=500
+        )
+
     
         
         
