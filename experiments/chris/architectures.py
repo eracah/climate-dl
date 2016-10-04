@@ -388,6 +388,10 @@ def full_image_net_1(args):
         conv = InverseLayer(conv, layer)
         decoder_layers.append(conv)
     l_out = conv
+
+    #num_events = 1
+    #l_out_s = DenseLayer(l_out, num_units=num_events*(768/4)*(1152/4))
+    
     # bug: get_encoder_and_decoder doesn't work for this
     #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
     ladder = []
@@ -395,8 +399,86 @@ def full_image_net_1(args):
         ladder += [a,b]
     return l_out, ladder
 
+
+def full_image_net_1_3d(args):
+    conv = InputLayer((None, 16, 8, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=128, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=768, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1280, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    decoder_layers = []
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+        decoder_layers.append(conv)
+    l_out = conv    
+    # bug: get_encoder_and_decoder doesn't work for this
+    #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    print_network(l_out)
+    return l_out, ladder
+
+
+def full_image_net_1_3d_v2(args):
+    conv = InputLayer((None, 16, 8, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=128, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=768, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    decoder_layers = []
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+        decoder_layers.append(conv)
+    l_out = conv    
+    # bug: get_encoder_and_decoder doesn't work for this
+    #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    print_network(l_out)
+    return l_out, ladder
+
+def full_image_net_1_3d_v3(args):
+    conv = InputLayer((None, 16, 8, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=196, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    #conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    #conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    #conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    decoder_layers = []
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+        decoder_layers.append(conv)
+    l_out = conv    
+    # bug: get_encoder_and_decoder doesn't work for this
+    #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    print_network(l_out)
+    return l_out, ladder
+
+
+
+
+
 if __name__ == '__main__':
-    l_out, _ = full_image_net_1({"sigma":0.})
+    l_out, _ = full_image_net_1_3d({"sigma":0.})
     for layer in get_all_layers(l_out):
         print type(layer), layer.output_shape
     print count_params(l_out)

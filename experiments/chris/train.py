@@ -118,7 +118,9 @@ def train(cfg,
             else:
                 # right now it is: (bs, time, nchannels, height, width)
                 # needs to be: (bs, nchannels, time, height, width)
-                X_batch = X_batch.reshape(X_batch.shape[0], X_batch.shape[2], X_batch.shape[1], X_batch.shape[3], X_batch.shape[4])
+                # BUG: this does not do what I think it does
+                #X_batch = X_batch.reshape(X_batch.shape[0], X_batch.shape[2], X_batch.shape[1], X_batch.shape[3], X_batch.shape[4])
+                X_batch = np.swapaxes(X_batch, 1, 2)
         else:
             pass # nothing needs to be done for stl-10
         return X_batch
@@ -192,6 +194,7 @@ def train(cfg,
                 img_orig = X_train_sample
                 img_reconstruct = out_fn(img_orig)
                 img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
+                #pdb.set_trace()
                 plot_image(img_composite, '%s/%i_%i.png' % (out_folder, epoch, nbatches))
             
         if debug:
@@ -950,6 +953,67 @@ if __name__ == "__main__":
             training_days=[1,319],
             validation_days=[320,345],
             out_folder="output/full_image_1_sigma1.0",
+            save_images_every=500
+        )
+    if "FULL_IMAGE_1_3D" in os.environ:
+        args = {"learning_rate": 0.01, "mode":"3d", "sigma":0. }
+        net_cfg = get_net(architectures.full_image_net_1_3d, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1_3d",
+            time_chunks_per_example=8,
+            save_images_every=50
+        )
+    if "FULL_IMAGE_1_3D_V2" in os.environ:
+        args = {"learning_rate": 0.01, "mode":"3d", "sigma":0. }
+        net_cfg = get_net(architectures.full_image_net_1_3d_v2, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1_3d_v2_test",
+            time_chunks_per_example=8,
+            save_images_every=1
+        )
+    if "FULL_IMAGE_1_3D_V2_RMSPROP" in os.environ:
+        args = {"learning_rate": 0.01, "mode":"3d", "sigma":0., "optim":"rmsprop" }
+        net_cfg = get_net(architectures.full_image_net_1_3d_v2, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1_3d_v2_rmsprop",
+            time_chunks_per_example=8,
+            save_images_every=500
+        )
+
+    if "FULL_IMAGE_1_3D_V3" in os.environ:
+        args = {"learning_rate": 0.01, "mode":"3d", "sigma":0. }
+        net_cfg = get_net(architectures.full_image_net_1_3d_v3, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1_3d_v3",
+            time_chunks_per_example=8,
             save_images_every=500
         )
 
