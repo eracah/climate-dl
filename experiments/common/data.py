@@ -21,7 +21,7 @@ sys.path.append("..")
 from pylab import rcParams
 rcParams['figure.figsize'] = 15, 20
 import pdb
-
+import itertools
 
 
 # -------------------------------------
@@ -216,9 +216,28 @@ def data_iterator(batch_size,
                 if b*batch_size >= spatiotemporal_tensor.shape[0]:
                     break
                 # todo: add labels
+                #pdb.set_trace()
                 yield spatiotemporal_tensor[b*batch_size:(b+1)*batch_size], None
                 b += 1
 
+
+def consecutive_day_iterator_3d(start_day, end_day, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False):
+    def imerge(a,b):
+        for i,j in itertools.izip(a,b):
+            yield i,j
+    # e.g. this will return days 1...364 (assuming start and end day is (1, 365))
+    iter1 = data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, shuffle=shuffle, img_size=-1, start_day=start_day, end_day=end_day-1)
+    # e.g. this will return days 2..365 (assuming start and end day is (1, 365))
+    iter2 = data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, shuffle=shuffle, img_size=-1, start_day=start_day+1, end_day=end_day)
+    # e.g. combined iterator will return: (day1, day2), (day2, day3), ..., (day 364, day 365)
+    for tp1, tp2 in imerge(iter1, iter2):
+        x1 = tp1[0]
+        #y1 = tp1[1]
+        x2 = tp2[0]
+        #y2 = tp2[1]
+        yield x1, x2
+
+                
 def normalize(arr,min_=None, max_=None, axis=(0,2,3)):
         if min_ is None or max_ is None:
             min_ = arr.min(axis=(0,2,3), keepdims=True)
@@ -254,6 +273,8 @@ def plot_learn_curve(tr_losses, val_losses, save_dir='.'):
     plt.clf()
     
 
+import pdb
+    
 # little test/example
 if __name__ == "__main__":
     """
@@ -265,8 +286,17 @@ if __name__ == "__main__":
         print x.shape, y.shape
     """
 
+    """
     i = 0
-    for x,y in data_iterator(batch_size=1, time_chunks_per_example=1, img_size=-1, data_dir="/storeSSD/cbeckham/nersc/big_images/"):
+    for x,y in data_iterator(batch_size=1, time_chunks_per_example=8, img_size=-1, data_dir="/storeSSD/cbeckham/nersc/big_images/"):
+        pdb.set_trace()
         i += 1
     print i
     assert i == 365*8
+    """
+
+    i=0
+    for x1, x2 in consecutive_day_iterator_3d(start_day=1, end_day=10, data_dir="/storeSSD/cbeckham/nersc/big_images/", shuffle=False):
+        print x1.shape, x2.shape
+        i += 1
+    print i
