@@ -6,6 +6,10 @@ from lasagne.objectives import *
 from lasagne.nonlinearities import *
 from lasagne.updates import *
 from lasagne.utils import *
+try:
+    from lasagne.layers import dnn
+except:
+    pass
 import numpy as np
 import cPickle as pickle
 import gzip
@@ -196,6 +200,70 @@ def climate_test_1(args={"sigma":0.}):
         ladder += [a,b]
     return final_out, ladder
 
+
+def climate_test_1_densifiable(args):
+    transition_layers = []
+    if not args["densify"]:
+        args["k"] = 0
+        args["L"] = 0
+    conv_kwargs = dict(num_filters=args['k'], filter_size=3, pad=1, nonlinearity=rectify)
+    conv = InputLayer((None,16,96,96))
+    conv = Conv2DLayer(conv, num_filters=args["nf"][0]-(args["k"]*args["L"]), filter_size=5, stride=2, nonlinearity=rectify, name="c1")
+    transition_layers.append(conv)
+    if args["densify"]:
+        conv = common.helper_fxns.make_dense_block(conv, args, conv_kwargs)
+    conv = Conv2DLayer(conv, num_filters=args["nf"][1]-(args["k"]*args["L"]), filter_size=5, stride=2, nonlinearity=rectify, name="c2")
+    transition_layers.append(conv)
+    if args["densify"]:
+        conv = common.helper_fxns.make_dense_block(conv, args, conv_kwargs)
+    conv = Conv2DLayer(conv, num_filters=args["nf"][2]-(args["k"]*args["L"]), filter_size=5, stride=2, nonlinearity=rectify, name="c3")
+    transition_layers.append(conv)
+    if args["densify"]:
+        conv = common.helper_fxns.make_dense_block(conv, args, conv_kwargs)
+    if "bottleneck" in args:
+        conv = DenseLayer(conv, num_units=512, nonlinearity=rectify)
+        conv = InverseLayer(conv, conv)
+    
+    # -----------
+    # decoder
+    # todo: i could for-loop the bottom, but i needed to do some hacky padding stuff
+    # -----------
+
+    c2 = SliceLayer(conv, indices=slice(0,args["nf"][0]-(args["k"]*args["L"])), axis=1)
+    c2a = TransposedConv2DLayer(c2, transition_layers[-1].input_shape[1],
+         transition_layers[-1].filter_size, stride=transition_layers[-1].stride, crop=transition_layers[-1].pad,
+         W=transition_layers[-1].W, flip_filters=not transition_layers[-1].flip_filters)    
+    c1 = SliceLayer(c2a, indices=slice(0,args["nf"][1]-(args["k"]*args["L"])), axis=1)
+    c1a = TransposedConv2DLayer(c1, transition_layers[-2].input_shape[1],
+             transition_layers[-2].filter_size, stride=transition_layers[-2].stride, crop=transition_layers[-2].pad,
+             W=transition_layers[-2].W, flip_filters=not transition_layers[-2].flip_filters)
+    c1a = PadLayer(c1a, width=[(1,0),(1,0)])
+    c0 = SliceLayer(c1a, indices=slice(0,args["nf"][2]-(args["k"]*args["L"])), axis=1)
+    c0a = TransposedConv2DLayer(c0, transition_layers[-3].input_shape[1],
+             transition_layers[-3].filter_size, stride=transition_layers[-3].stride, crop=transition_layers[-3].pad,
+             W=transition_layers[-3].W, flip_filters=not transition_layers[-3].flip_filters)
+    c0a = PadLayer(c0a, width=[(1,0),(1,0)])    
+
+    # todo: add ladder??
+    return c0a, None
+
+
+def climate_test_1_3d(args={"sigma":0.}):
+    conv = InputLayer((None,16,8,96,96))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=128, filter_size=(4,5,5), stride=(1,2,2), nonlinearity=rectify)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(3,5,5), stride=(1,2,2), nonlinearity=rectify)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(3,5,5), stride=(1,2,2), nonlinearity=rectify)
+    if "bottleneck" in args:
+        conv = DenseLayer(conv, num_units=args["bottleneck"], nonlinearity=rectify)
+    l_out = conv
+    print_network(l_out)
+    final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    return final_out, ladder
+
         
 def massive_1_deep(args):
     conv = InputLayer((None,16,128,128))
@@ -298,3 +366,119 @@ def autoencoder_basic_double_up_512_stride(args={"f":32, "d":4096}):
         print layer, layer.output_shape
     print count_params(layer)
     return conv
+
+
+# ------------------------------------------
+
+
+def full_image_net_1(args):
+    conv = InputLayer((None, 16, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = Conv2DLayer(conv, num_filters=128, filter_size=5, stride=2); encoder_layers.append(conv)
+    conv = Conv2DLayer(conv, num_filters=256, filter_size=5, stride=2); encoder_layers.append(conv)
+    conv = Conv2DLayer(conv, num_filters=512, filter_size=5, stride=2); encoder_layers.append(conv)
+    conv = Conv2DLayer(conv, num_filters=768, filter_size=5, stride=2); encoder_layers.append(conv)
+    conv = Conv2DLayer(conv, num_filters=1024, filter_size=5, stride=2); encoder_layers.append(conv)
+    conv = Conv2DLayer(conv, num_filters=1280, filter_size=5, stride=2); encoder_layers.append(conv)
+    decoder_layers = []
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+        decoder_layers.append(conv)
+    l_out = conv
+
+    #num_events = 1
+    #l_out_s = DenseLayer(l_out, num_units=num_events*(768/4)*(1152/4))
+    
+    # bug: get_encoder_and_decoder doesn't work for this
+    #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    return l_out, ladder
+
+
+def full_image_net_1_3d(args):
+    conv = InputLayer((None, 16, 8, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=128, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=768, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1280, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    decoder_layers = []
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+        decoder_layers.append(conv)
+    l_out = conv    
+    # bug: get_encoder_and_decoder doesn't work for this
+    #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    print_network(l_out)
+    return l_out, ladder
+
+
+def full_image_net_1_3d_v2(args):
+    conv = InputLayer((None, 16, 8, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=128, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=768, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    decoder_layers = []
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+        decoder_layers.append(conv)
+    l_out = conv    
+    # bug: get_encoder_and_decoder doesn't work for this
+    #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    print_network(l_out)
+    return l_out, ladder
+
+def full_image_net_1_3d_v3(args):
+    conv = InputLayer((None, 16, 8, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=196, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    #conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    #conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    #conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    decoder_layers = []
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv = InverseLayer(conv, layer)
+        decoder_layers.append(conv)
+    l_out = conv    
+    # bug: get_encoder_and_decoder doesn't work for this
+    #final_out, decoder_layers, encoder_layers = get_encoder_and_decoder(l_out)
+    ladder = []
+    for a,b in zip(decoder_layers, encoder_layers[::-1]):
+        ladder += [a,b]
+    print_network(l_out)
+    return l_out, ladder
+
+
+
+
+
+if __name__ == '__main__':
+    l_out, _ = full_image_net_1_3d({"sigma":0.})
+    for layer in get_all_layers(l_out):
+        print type(layer), layer.output_shape
+    print count_params(l_out)
