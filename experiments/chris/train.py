@@ -30,16 +30,26 @@ import architectures
 # -------------------------------------
 
 def get_net(net_cfg, args):
+    
     l_out, ladder = net_cfg(args)
-    if args["mode"] == "2d":
+    if args["dim"] == "2d":
         X = T.tensor4('X')
-    elif args["mode"] == "3d":
+        Y = T.tensor4('Y')
+    elif args["dim"] == "3d":
         X = T.tensor5('X')
+        Y = T.tensor5('Y')
     #net_out = get_output(l_out, X)
     ladder_output = get_output([l_out] + ladder, X)
     net_out = ladder_output[0]
+    
     # squared error loss is between the first two terms
-    loss = squared_error(net_out, X).mean()
+    if args["mode"] == "autoencoder":
+        sys.stderr.write("mode = autoencoder\n")
+        loss = squared_error(net_out, X).mean()
+    elif args["mode"] == "classification":
+        sys.stderr.write("mode = classification\n")
+        loss = squared_error(net_out, Y).mean()
+    
     sys.stderr.write("main loss between %s and %s\n" % (str(l_out.output_shape), "X") )
     ladder_output = ladder_output[1::]
     if "ladder" in args:
@@ -49,10 +59,16 @@ def get_net(net_cfg, args):
             assert ladder[i].output_shape == ladder[i+1].output_shape
             loss += args["ladder"]*squared_error(ladder_output[i], ladder_output[i+1]).mean()
     net_out_det = get_output(l_out, X, deterministic=True)
+
     # this is deterministic + doesn't have the reg params added to the end
-    loss_det = squared_error(net_out_det, X).mean()
+    if args["mode"] == "autoencoder":
+        loss_det = squared_error(net_out_det, X).mean()
+    elif args["mode"] == "classification":
+        loss_det = squared_error(net_out_det, Y).mean()
+
     params = get_all_params(l_out, trainable=True)
     lr = theano.shared(floatX(args["learning_rate"]))
+    
     if "optim" not in args:
         updates = nesterov_momentum(loss, params, learning_rate=lr, momentum=0.9)
     else:
@@ -62,8 +78,12 @@ def get_net(net_cfg, args):
             updates = adam(loss, params, learning_rate=lr)
     #updates = adadelta(loss, params, learning_rate=lr)
     #updates = rmsprop(loss, params, learning_rate=lr)
-    train_fn = theano.function([X], [loss, loss_det], updates=updates)
-    loss_fn = theano.function([X], loss)
+
+    # this function takes in an X and Y, and for the case of autoencoder,
+    # we only really use X, but for the classification part, we actually
+    # use X and Y
+    train_fn = theano.function([X, Y], [loss, loss_det], updates=updates, on_unused_input='warn')
+    loss_fn = theano.function([X, Y], loss, on_unused_input='warn')
     out_fn = theano.function([X], net_out_det)
     return {
         "train_fn": train_fn,
@@ -86,9 +106,13 @@ def iterate(X_train, bs=32):
 def get_iterator(name, batch_size, data_dir, start_day, end_day, img_size, time_chunks_per_example, shuffle):
     # for stl10, 'days' and 'data_dir' does not make
     # any sense
-    assert name in ["climate", "stl10"]
+    assert name in ["climate", "climate_classification", "stl10"]
     if name == "climate":
         return common.data_iterator(batch_size, data_dir, start_day=start_day, end_day=end_day, img_size=img_size, time_chunks_per_example=time_chunks_per_example, shuffle=shuffle)
+    elif name =="climate_classification":
+        sys.stderr.write("warning: batch_size, img_size, time_chunks_per_example are ignored for climate_classification\n")
+        return common.data.consecutive_day_iterator_3d(start_day=start_day, end_day=end_day, data_dir=data_dir, shuffle=shuffle)
+    #def consecutive_day_iterator_3d(start_day, end_day, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False)
     elif name == "stl10":
         return stl10.data_iterator(batch_size)
         
@@ -111,7 +135,7 @@ def train(cfg,
         debug=True):
     
     def prep_batch(X_batch):
-        if dataset == "climate":
+        if dataset in ["climate", "climate_classification"]:
             if time_chunks_per_example == 1:
                 # shape is (32, 1, 16, 128, 128), so collapse to a 4d tensor
                 X_batch = X_batch.reshape(X_batch.shape[0], X_batch.shape[2], X_batch.shape[3], X_batch.shape[4])
@@ -126,10 +150,11 @@ def train(cfg,
         return X_batch
 
     def plot_image(img_composite, filename):
-        if dataset == "climate":
+        if dataset in ["climate", "climate_classification"]:
             for j in range(0,32):
                 plt.subplot(8,4,j+1)
                 if time_chunks_per_example > 1:
+                    pdb.set_trace()
                     plt.imshow(img_composite[j][0])
                 else:
                     plt.imshow(img_composite[j])
@@ -179,10 +204,21 @@ def train(cfg,
         for X_train, y_train in get_iterator(dataset, batch_size, data_dir, start_day=training_days[0], end_day=training_days[1],
                                              img_size=img_size, time_chunks_per_example=time_chunks_per_example, shuffle=True):
             X_train = prep_batch(X_train)
+            
             if first_minibatch:
                 X_train_sample = X_train[0:1]
                 first_minibatch = False
-            this_loss, this_loss_det = train_fn(X_train)
+
+            # if we're doing the autoencoder, then y can simply be
+            # anything, since we only use X in the loss,
+            # otherwise if it's classification we use the
+            # y_train that is returned by the iterator
+            if dataset != "climate_classification":
+                y_train = np.zeros(X_train.shape, dtype=X_train.dtype)
+            else:
+                y_train = prep_batch(y_train)
+            
+            this_loss, this_loss_det = train_fn(X_train, y_train)
             train_losses.append(this_loss)
             train_losses_det.append(this_loss_det)
             f_train_raw.write("%f,%f\n" % (this_loss, this_loss_det))
@@ -192,25 +228,37 @@ def train(cfg,
 
             if save_images_every != -1 and nbatches % save_images_every == 0:
                 img_orig = X_train_sample
+                #fake_y = np.zeros(img_orig.shape, dtype=img_orig.dtype)
                 img_reconstruct = out_fn(img_orig)
                 img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
-                #pdb.set_trace()
                 plot_image(img_composite, '%s/%i_%i.png' % (out_folder, epoch, nbatches))
             
         if debug:
             mem = virtual_memory()
             print mem
+            
         # VALIDATION LOOP
         for X_valid, y_valid in get_iterator(dataset, batch_size, data_dir, start_day=validation_days[0], end_day=validation_days[1],
                                               img_size=img_size, time_chunks_per_example=time_chunks_per_example, shuffle=False):
             X_valid = prep_batch(X_valid)
-            this_loss = loss_fn(X_valid)
+
+            # if we're doing the autoencoder, then y can simply be
+            # anything, since we only use X in the loss,
+            # otherwise if it's classification we use the
+            # y_train that is returned by the iterator
+            if dataset != "climate_classification":
+                y_valid = np.zeros(X_valid.shape, dtype=X_valid.dtype)
+            else:
+                y_valid = prep_batch(y_valid)
+            
+            this_loss = loss_fn(X_valid, y_valid)
             valid_losses.append(this_loss)
             f_valid_raw.write("%f\n" % this_loss)
             f_valid_raw.flush()
             
         # DEBUG: visualise the reconstructions
         img_orig = X_train_sample
+        #fake_y = np.zeros(img_orig.shape, dtype=img_orig.dtype) # hacky!!
         img_reconstruct = out_fn(img_orig)
         img_composite = np.vstack((img_orig[0],img_reconstruct[0]))
         plot_image(img_composite, '%s/%i.png' % (out_folder, epoch))
@@ -956,7 +1004,7 @@ if __name__ == "__main__":
             save_images_every=500
         )
     if "FULL_IMAGE_1_3D" in os.environ:
-        args = {"learning_rate": 0.01, "mode":"3d", "sigma":0. }
+        args = {"learning_rate": 0.01, "dim":"3d", "mode":"autoencoder", "sigma":0. }
         net_cfg = get_net(architectures.full_image_net_1_3d, args)
         train(
             net_cfg,
@@ -966,9 +1014,9 @@ if __name__ == "__main__":
             dataset="climate",
             training_days=[1,319],
             validation_days=[320,345],
-            out_folder="output/full_image_1_3d",
+            out_folder="output/full_image_1_3d_deleteme",
             time_chunks_per_example=8,
-            save_images_every=50
+            save_images_every=100000
         )
     if "FULL_IMAGE_1_3D_V2" in os.environ:
         args = {"learning_rate": 0.01, "mode":"3d", "sigma":0. }
@@ -1001,9 +1049,9 @@ if __name__ == "__main__":
             save_images_every=500
         )
 
-    if "FULL_IMAGE_1_3D_V3" in os.environ:
+    if "FULL_IMAGE_1_3D_V3B" in os.environ:
         args = {"learning_rate": 0.01, "mode":"3d", "sigma":0. }
-        net_cfg = get_net(architectures.full_image_net_1_3d_v3, args)
+        net_cfg = get_net(architectures.full_image_net_1_3d_v3b, args)
         train(
             net_cfg,
             num_epochs=100,
@@ -1012,12 +1060,29 @@ if __name__ == "__main__":
             dataset="climate",
             training_days=[1,319],
             validation_days=[320,345],
-            out_folder="output/full_image_1_3d_v3",
+            out_folder="output/full_image_1_3d_v3b",
             time_chunks_per_example=8,
             save_images_every=500
         )
 
-    
+    # ----------------- classification -----------------
+
+    if "FULL_IMAGE_1_3D_CLASSIFICATION" in os.environ:
+        args = {"learning_rate": 0.01, "dim":"3d", "mode":"classification", "sigma":0. }
+        net_cfg = get_net(architectures.full_image_net_1_3d, args)
+        train(
+            net_cfg,
+            num_epochs=100,
+            batch_size=1,
+            img_size=-1,
+            dataset="climate_classification",
+            training_days=[1,319],
+            validation_days=[320,345],
+            out_folder="output/full_image_1_3d_classification_deleteme",
+            time_chunks_per_example=8,
+            save_images_every=1
+        )
+
         
         
     """

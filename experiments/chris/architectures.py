@@ -450,12 +450,12 @@ def full_image_net_1_3d_v2(args):
     print_network(l_out)
     return l_out, ladder
 
-def full_image_net_1_3d_v3(args):
+def full_image_net_1_3d_v3b(args):
     conv = InputLayer((None, 16, 8, 768, 1152))
     conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
     encoder_layers = []
     conv = dnn.Conv3DDNNLayer(conv, num_filters=196, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
-    #conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
     #conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
     #conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
     decoder_layers = []
