@@ -155,7 +155,6 @@ def data_iterator(batch_size,
                   data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/",
                   time_chunks_per_example=1,
                   shuffle=False,
-                  img_size=128,
                   step_size=20,
                   start_day=1,
                   end_day=365,
@@ -187,48 +186,22 @@ def data_iterator(batch_size,
         if shuffle:
             np.random.shuffle(spatiotemporal_tensor)
 
-        # yield chunks of the original image
-        if img_size > 0:
-            x_buf, y_buf = [], []
-            for ind, spt_chunk in enumerate(spatiotemporal_tensor):
-                # for each w*h px chunk
-                for chunk, cls_ in get_slices(spt_chunk, labels=labels[ind], step_size=step_size, img_size=img_size):
-                    if len(x_buf) == batch_size:
-                        x_buf = np.asarray(x_buf, dtype=x_buf[0].dtype)
-                        y_buf = np.asarray(y_buf, dtype="int32")
-                        yield x_buf, y_buf
-                        x_buf = []
-                        y_buf = []
-                    else:
-                        x_buf.append(chunk)
-                        y_buf.append(cls_)
-                # if there is left over stuff in the buffer in the end, yield that too
-                if len(x_buf) != 0:
-                    x_buf = np.asarray(x_buf, dtype=x_buf[0].dtype)
-                    y_buf = np.asarray(y_buf, dtype="int32")
-                    yield x_buf, y_buf
-                    x_buf = []
-                    y_buf = []
-                day = day + 1
-        else:
-            b = 0
-            while True:
-                if b*batch_size >= spatiotemporal_tensor.shape[0]:
-                    break
-                # todo: add labels
-                #pdb.set_trace()
-                yield spatiotemporal_tensor[b*batch_size:(b+1)*batch_size], None
-                b += 1
-
+        b = 0
+        while True:
+            if b*batch_size >= spatiotemporal_tensor.shape[0]:
+                break
+            # todo: add labels
+            yield spatiotemporal_tensor[b*batch_size:(b+1)*batch_size], None
+            b += 1
 
 def consecutive_day_iterator_3d(start_day, end_day, data_dir="/project/projectdirs/dasrepo/gordon_bell/climate/data/big_images/", shuffle=False):
     def imerge(a,b):
         for i,j in itertools.izip(a,b):
             yield i,j
     # e.g. this will return days 1...364 (assuming start and end day is (1, 365))
-    iter1 = data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, shuffle=shuffle, img_size=-1, start_day=start_day, end_day=end_day-1)
+    iter1 = data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, shuffle=shuffle, start_day=start_day, end_day=end_day-1)
     # e.g. this will return days 2..365 (assuming start and end day is (1, 365))
-    iter2 = data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, shuffle=shuffle, img_size=-1, start_day=start_day+1, end_day=end_day)
+    iter2 = data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, shuffle=shuffle, start_day=start_day+1, end_day=end_day)
     # e.g. combined iterator will return: (day1, day2), (day2, day3), ..., (day 364, day 365)
     for tp1, tp2 in imerge(iter1, iter2):
         x1 = tp1[0]
