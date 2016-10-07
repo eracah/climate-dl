@@ -426,6 +426,56 @@ def full_image_net_1_3d(args):
     return l_out, ladder
 
 
+def full_image_net_1_3d_segmenter(args):
+    """
+    Returns: encoder_out, segmentation_out, decoder_out
+    """
+    # ###############
+    # X encoder part
+    # ###############
+    conv = InputLayer((None, 16, 4, 768, 1152))
+    conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
+    encoder_layers = []
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=128, filter_size=(3,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=256, filter_size=(2,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=512, filter_size=(1,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=768, filter_size=(1,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1024, filter_size=(1,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    conv = dnn.Conv3DDNNLayer(conv, num_filters=1280, filter_size=(1,5,5), stride=(1,2,2)); encoder_layers.append(conv)
+    # ###############
+    # classifier part
+    # ###############
+    conv2 = ReshapeLayer(conv, (-1, 1280, 9, 15)) # prep it before the 2d conv
+    conv2 = Conv2DLayer(conv2, num_filters=(3*4), filter_size=(1,1)) # we need masks for every time step
+    conv2 = ReshapeLayer(conv2, (-1, 3, 4, 9, 15)) # reshaping
+    l_out_for_X = NonlinearityLayer(conv2, nonlinearity=sigmoid)
+    print "classifier part:"
+    print_network(l_out_for_X)
+    # ###########
+    # Y decimator
+    # ###########
+    yconv = InputLayer((None, 3, 4, 768, 1152))
+    yconv = ReshapeLayer(yconv, (-1, 3*4, 768, 1152)) 
+    num_decimation_layers=6
+    for i in range(num_decimation_layers):
+        yconv = MaxPool2DLayer(yconv,pool_size=5,stride=2)
+    yconv = ReshapeLayer(yconv, (-1, 3, 4, 9, 15))
+    l_out_for_Y = yconv
+    print "y decimator part:"
+    print_network(l_out_for_Y)
+    # ##############
+    # X decoder part
+    # ##############
+    conv3 = conv
+    for layer in get_all_layers(conv)[::-1]:
+        if isinstance(layer, InputLayer):
+            break
+        conv3 = InverseLayer(conv3, layer)
+    l_out_for_decoder = conv3
+    print "decoder part:"
+    print_network(l_out_for_decoder)
+    return l_out_for_X, l_out_for_Y, l_out_for_decoder
+
 def full_image_net_1_3d_v2(args):
     conv = InputLayer((None, 16, 8, 768, 1152))
     conv = GaussianNoiseLayer(conv, sigma=args["sigma"])
@@ -478,7 +528,4 @@ def full_image_net_1_3d_v3b(args):
 
 
 if __name__ == '__main__':
-    l_out, _ = full_image_net_1_3d({"sigma":0.})
-    for layer in get_all_layers(l_out):
-        print type(layer), layer.output_shape
-    print count_params(l_out)
+    l_out, l_out2, l_out3 = full_image_net_1_3d_segmenter({"sigma":0.})
