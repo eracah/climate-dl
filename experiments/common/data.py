@@ -11,9 +11,8 @@ import numpy as np
 import cPickle as pickle
 import gzip
 import matplotlib
-#matplotlib.use('agg')
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
-%matplotlib inline
 import os
 import sys
 from time import time
@@ -128,6 +127,7 @@ def _day_iterator(year=1979, data_dir="/project/projectdirs/dasrepo/gordon_bell/
     camfiles = camfiles[ind+(start_day-1):ind+end_day] # [
     if shuffle:
         np.random.shuffle(camfiles)
+        sys.stderr.write("warning: shuffling camfiles in _day_iterator()\n")
     for camfile in camfiles:
         dataset = nc.Dataset(maindir+'/'+camfile, "r", format="NETCDF4")
         x=768
@@ -173,8 +173,8 @@ def data_iterator(batch_size,
         sp_mask = masks.reshape(time_chunks_per_day / time_chunks_per_example, 
                                                time_chunks_per_example,classes+1, h ,w)
         
-        if shuffle:
-            np.random.shuffle(spatiotemporal_tensor)
+        #if shuffle:
+        #    np.random.shuffle(spatiotemporal_tensor)
 
         b = 0
         while True:
@@ -206,15 +206,20 @@ def consecutive_day_iterator_3d(start_day, end_day, data_dir="/project/projectdi
             yield x,y
         else:
             yield (x1,y1), (x2,y2)
+
 def segmentation_iterator(start_day, end_day, data_dir="/project/projectdirs/dasrepo/gordon_bell/deep_learning/data/climate/big_images/", 
                                 shuffle=False, classes=2, labels_only=True ):
     for x,y in data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, 
-                  shuffle=shuffle, start_day=start_day, end_day=end_day, classes=classes):
+                  shuffle=shuffle, start_day=start_day+1, end_day=end_day, classes=classes):
         if labels_only:
-            yield x[:,[0,2,4,6]], y[:,[0,2,4,6]]
+            x_new, y_new = x[:,[0,2,4,6]], y[:,[0,2,4,6]]
+            x_new, y_new = np.swapaxes(x_new, 1, 2), np.swapaxes(y_new, 1, 2)
+            y_new = y_new.astype("float32")
+            yield x_new, y_new
         else:
-            yield x,y
-        
+            x, y = np.swapaxes(x, 1, 2), np.swapaxes(y, 1, 2)
+            y = y.astype("float32")
+            yield x, y
             
 
                 
@@ -248,85 +253,31 @@ def normalize_tmp(arr,min_=None, max_=None, axis=(0,2,3)):
 
 import pdb
   
+if __name__ == '__main__':
+    #def segmentation_iterator(start_day, end_day, data_dir="/storeSSD/cbeckham/nersc/big_images/", 
+    #                            shuffle=False, classes=2, labels_only=True ):
+    i=0
+    for x,y in segmentation_iterator(start_day=1, end_day=10, data_dir="/storeSSD/cbeckham/nersc/big_images/", shuffle=False):
 
-  
-# # little test/example
-# if __name__ == "__main__":
-#     """
-#     for x,y in data_iterator(batch_size=1716, time_chunks_per_example=1):
-        
-#         # if any of the labels are not none
-#         if y[y>-3].shape[0] > 0:
-#             labelled_chunks = x[y>-3]
-#         print x.shape, y.shape
-#     """
-
-#     """
-#     i = 0
-#     for x,y in data_iterator(batch_size=1, time_chunks_per_example=8, img_size=-1, data_dir="/storeSSD/cbeckham/nersc/big_images/"):
-#         pdb.set_trace()
-#         i += 1
-#     print i
-#     assert i == 365*8
-#     """
-
-#     i=0
-#     for x1, x2 in consecutive_day_iterator_3d(start_day=1, end_day=10, data_dir="/storeSSD/cbeckham/nersc/big_images/", shuffle=False):
-#         print x1.shape, x2.shape
-#         i += 1
-#     print i
-# if __name__ == "__main__":
-#     for i, (x,y) in enumerate(data_iterator(batch_size=1,
-#                       data_dir="/project/projectdirs/dasrepo/gordon_bell/deep_learning/data/climate/big_images/",
-#                       time_chunks_per_example=8,
-#                       shuffle=False,
-#                       start_day=1,
-#                       end_day=2,
-#                       month1='10',
-#                       day1='06',
-#                       time_steps=8)):
-#         print x.shape, y.shape
-#         plt.figure(i)
-#         ax = plt.subplot(2,2,1)
-#         ax.imshow(x[0,0,6])
-#         for j in range(3):
-#             ax = plt.subplot(2,2,j + 2)
-#             ax.imshow(y[0,0,j], cmap='gray')
-#         plt.show()
-#         assert False
-    
-
-from pylab import rcParams
-rcParams['figure.figsize'] = 15, 25
-if __name__ == "__main__":
-    for i,(x,  y) in enumerate(segmentation_iterator(1, 6, classes=2)):
-        print x.shape, y.shape
-        plt.figure(i)
-
-        c = 0
-        for k in range(4):
-            ax = plt.subplot(4,4,c+1)
-            ax.imshow(x[0,k,6])
-            c+=1
-            for m in range(3):
                 
-                ax = plt.subplot(4,4,c+1)
-                ax.imshow(y[0,k,m], cmap='gray')
-                c+=1
-                
-        assert False
+        #y=y[0][1][0]
+        """
+        print y.shape
+        y = y[0][1]
+        print y.shape
+        for t in range(0, y.shape[0]):
+            plt.imshow(y[t])
+            plt.savefig("tmp/%i.png" % i)
+            i += 1
+            print i
+        """
 
-
-#         plt.figure(2)
-#         ax = plt.subplot(2,2,1)
-#         ax.imshow(x2[0,0,6])
-#         for j in range(3):
-#             ax = plt.subplot(2,2,j + 2)
-#             ax.imshow(y2[0,0,j], cmap='gray')
-#         plt.show()
         
-
-
-
-
-
+        print x.shape
+        x = x[0][12]
+        for t in range(0, x.shape[0]):
+            plt.imshow(x[t])
+            plt.savefig("tmp/x_%i.png" % i)
+            i += 1
+            print i
+        
