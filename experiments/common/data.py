@@ -209,7 +209,7 @@ def consecutive_day_iterator_3d(start_day, end_day, data_dir="/project/projectdi
 def segmentation_iterator(start_day, end_day, data_dir="/project/projectdirs/dasrepo/gordon_bell/deep_learning/data/climate/big_images/", 
                                 shuffle=False, classes=2, labels_only=True ):
     for x,y in data_iterator(batch_size=1, data_dir=data_dir, time_chunks_per_example=8, 
-                  shuffle=shuffle, start_day=start_day+1, end_day=end_day, classes=classes):
+                  shuffle=shuffle, start_day=start_day, end_day=end_day, classes=classes):
         if labels_only:
             yield x[:,[0,2,4,6]], y[:,[0,2,4,6]]
         else:
@@ -275,44 +275,46 @@ import pdb
 #         print x1.shape, x2.shape
 #         i += 1
 #     print i
-if __name__ == "__main__":
-    for i, (x,y) in enumerate(data_iterator(batch_size=1,
-                      data_dir="/project/projectdirs/dasrepo/gordon_bell/deep_learning/data/climate/big_images/",
-                      time_chunks_per_example=8,
-                      shuffle=False,
-                      start_day=1,
-                      end_day=2,
-                      month1='10',
-                      day1='06',
-                      time_steps=8)):
-        print x.shape, y.shape
-        plt.figure(i)
-        ax = plt.subplot(2,2,1)
-        ax.imshow(x[0,0,6])
-        for j in range(3):
-            ax = plt.subplot(2,2,j + 2)
-            ax.imshow(y[0,0,j], cmap='gray')
-        plt.show()
-        assert False
+# if __name__ == "__main__":
+#     for i, (x,y) in enumerate(data_iterator(batch_size=1,
+#                       data_dir="/project/projectdirs/dasrepo/gordon_bell/deep_learning/data/climate/big_images/",
+#                       time_chunks_per_example=8,
+#                       shuffle=False,
+#                       start_day=1,
+#                       end_day=2,
+#                       month1='10',
+#                       day1='06',
+#                       time_steps=8)):
+#         print x.shape, y.shape
+#         plt.figure(i)
+#         ax = plt.subplot(2,2,1)
+#         ax.imshow(x[0,0,6])
+#         for j in range(3):
+#             ax = plt.subplot(2,2,j + 2)
+#             ax.imshow(y[0,0,j], cmap='gray')
+#         plt.show()
+#         assert False
     
 
 from pylab import rcParams
 rcParams['figure.figsize'] = 15, 25
 if __name__ == "__main__":
-    for (x,  y) in segmentation_iterator(1, 2, classes=2):
+    for i,(x,  y) in enumerate(segmentation_iterator(1, 6, classes=2)):
         print x.shape, y.shape
-        plt.figure(1)
+        plt.figure(i)
 
         c = 0
         for k in range(4):
-            ax = plt.subplot(4,8,c+1)
+            ax = plt.subplot(4,4,c+1)
             ax.imshow(x[0,k,6])
             c+=1
             for m in range(3):
                 
-                ax = plt.subplot(4,8,c+1)
+                ax = plt.subplot(4,4,c+1)
                 ax.imshow(y[0,k,m], cmap='gray')
                 c+=1
+                
+        assert False
 
 
 #         plt.figure(2)
@@ -322,7 +324,6 @@ if __name__ == "__main__":
 #             ax = plt.subplot(2,2,j + 2)
 #             ax.imshow(y2[0,0,j], cmap='gray')
 #         plt.show()
-        assert False
         
 
 
